@@ -254,12 +254,13 @@ jobs:
           git push
 ```
 ### Fluxo completo com esse workflow
-|Etapa	| Responsável |Ação
-|Build/Push | GitHub Actions | Builda a aplicação, gera uma imagem imutável com o SHA do commit e faz push para o Container Registry.
-|Update Manifest | GitHub Actions | Atualiza a imagem no Rollout e commita essa alteração de volta no repositório Git.
-|GitOps Sync | Argo CD | Detecta o novo commit e sincroniza o estado desejado com o cluster.
-|Progressive Delivery | Argo Rollouts | Executa canary ou blue/green, com validação automática via AnalysisTemplate (Prometheus).
-|Callback + DORA Metrics | Argo Rollouts Notifications + retorno.yml | Ao finalizar (Healthy ou Degraded), dispara o repository_dispatch. O retorno.yml calcula o Lead Time for Changes (commit da alteração → rollout Healthy) e publica no Pushgateway para visualização no Grafana.
+| Etapa	| Responsável |Ação |
+|---|---|---|
+| Build/Push | GitHub Actions | Builda a aplicação, gera uma imagem imutável com o SHA do commit e faz push para o Container Registry. |
+| Update Manifest | GitHub Actions | Atualiza a imagem no Rollout e commita essa alteração de volta no repositório Git. |
+| GitOps Sync | Argo CD | Detecta o novo commit e sincroniza o estado desejado com o cluster. |
+| Progressive Delivery | Argo Rollouts | Executa canary ou blue/green, com validação automática via AnalysisTemplate (Prometheus). |
+| Callback + DORA Metrics | Argo Rollouts Notifications + retorno.yml | Ao finalizar (Healthy ou Degraded), dispara o repository_dispatch. O retorno.yml calcula o Lead Time for Changes (commit da alteração → rollout Healthy) e publica no Pushgateway para visualização no Grafana. |
 
 Resumindo
 - Em cenário real: Falta a etapa build + push + update do manifesto. É ela que fecha o ciclo de CI dentro do modelo GitOps.
