@@ -28,10 +28,15 @@ echo "[entrypoint] Banco disponível"
 export FLASK_APP=wsgi:app
 python -m flask db upgrade || true
 
+# prometheus_client multiprocess: cada worker do gunicorn escreve no mesmo diretório.
+export PROMETHEUS_MULTIPROC_DIR="${PROMETHEUS_MULTIPROC_DIR:-/tmp/prometheus-multiproc}"
+rm -rf "$PROMETHEUS_MULTIPROC_DIR"
+mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
+
 PORT="${PORT:-5000}"
 WORKERS="${GUNICORN_WORKERS:-2}"
 THREADS="${GUNICORN_THREADS:-4}"
 TIMEOUT="${GUNICORN_TIMEOUT:-120}"
 
-echo "Iniciando Gunicorn com ddtrace-run na porta ${PORT}..."
-exec ddtrace-run gunicorn -w "${WORKERS}" -k gthread --threads "${THREADS}" -b "0.0.0.0:${PORT}" --timeout "${TIMEOUT}" --access-logfile - --error-logfile - wsgi:app
+echo "Iniciando Gunicorn com OpenTelemetry na porta ${PORT}..."
+exec gunicorn -w "${WORKERS}" -k gthread --threads "${THREADS}" -b "0.0.0.0:${PORT}" --timeout "${TIMEOUT}" --access-logfile - --error-logfile - wsgi:app

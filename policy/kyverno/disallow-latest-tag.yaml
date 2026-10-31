@@ -1,0 +1,43 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow :latest image tag
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: pod-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - gitops-lab
+      validate:
+        message: "Use uma tag explícita de imagem; ':latest' não é permitido."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"
+    - name: rollout-image-tag
+      match:
+        any:
+          - resources:
+              apiGroups:
+                - argoproj.io
+              kinds:
+                - Rollout
+              namespaces:
+                - gitops-lab
+      validate:
+        message: "Use uma tag explícita de imagem; ':latest' não é permitido."
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                  - image: "!*:latest"

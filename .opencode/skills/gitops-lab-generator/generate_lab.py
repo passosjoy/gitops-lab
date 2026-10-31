@@ -9,7 +9,9 @@ def criar_estrutura_lab(nome_lab="gitops-lab-argo-istio"):
         f"{nome_lab}/manifests/rollouts/bluegreen",
         f"{nome_lab}/manifests/istio",
         f"{nome_lab}/manifests/analysis",
-        f"{nome_lab}/manifests/datadog",
+        f"{nome_lab}/manifests/observability",
+        f"{nome_lab}/manifests/notifications",
+        f"{nome_lab}/values",
         f"{nome_lab}/argocd",
         f"{nome_lab}/docs",
     ]
@@ -41,8 +43,7 @@ spec:
         track: canary
       annotations:
         sidecar.istio.io/inject: "true"
-        # Exemplo de integração com Datadog APM/Logs
-        ad.datadoghq.com/web.logs: '[{"source": "nodejs", "service": "minha-aplicacao"}]'
+        # A aplicação expõe /metrics (Prometheus) e envia traces via OTLP.
     spec:
       containers:
         - name: web
@@ -78,7 +79,7 @@ spec:
               - primary
       analysis:
         templates:
-          - templateName: datadog-success-rate
+          - templateName: app-success-rate
         startingStep: 1
         args:
           - name: service-name
@@ -88,17 +89,17 @@ spec:
         - pause: { duration: 2m }
         - analysis:
             templates:
-              - templateName: datadog-success-rate
+              - templateName: app-success-rate
         - setWeight: 20
         - pause: { duration: 3m }
         - analysis:
             templates:
-              - templateName: datadog-success-rate
+              - templateName: app-success-rate
         - setWeight: 50
         - pause: { duration: 5m }
         - analysis:
             templates:
-              - templateName: datadog-success-rate
+              - templateName: app-success-rate
         - setWeight: 80
         - pause: { duration: 5m }
         - setWeight: 100
@@ -146,13 +147,13 @@ spec:
       scaleDownDelaySeconds: 30
       prePromotionAnalysis:
         templates:
-          - templateName: datadog-success-rate
+          - templateName: app-success-rate
         args:
           - name: service-name
             value: minha-aplicacao-bg
       postPromotionAnalysis:
         templates:
-          - templateName: datadog-success-rate
+          - templateName: app-success-rate
         args:
           - name: service-name
             value: minha-aplicacao-bg
@@ -205,34 +206,32 @@ spec:
     with open(f"{nome_lab}/manifests/istio/virtualservice-destinationrule.yaml", "w") as f:
         f.write(istio_vs_dr_yaml)
 
-    # 4. AnalysisTemplate para Datadog (template base)
-    analysis_datadog_yaml = """apiVersion: argoproj.io/v1alpha1
+    # 4. AnalysisTemplate Prometheus (template base)
+    analysis_prometheus_yaml = """apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
-  name: datadog-success-rate
+  name: app-success-rate
   namespace: gitops-lab
 spec:
   args:
     - name: service-name
   metrics:
     - name: success-rate
-      interval: 2m
-      count: 3
+      interval: 1m
+      count: 5
+      failureLimit: 1
       successCondition: result[0] >= 0.99
-      failureLimit: 2
       provider:
-        datadog:
-          apiVersion: v1
-          interval: 2m
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.observability.svc.cluster.local:9090
           query: |
-            sum:trace.servlet.request.hits{service:{{args.service-name}},env:lab}.as_count() - 
-            sum:trace.servlet.request.errors{service:{{args.service-name}},env:lab}.as_count()
+            sum(rate(http_requests_total{service="{{args.service-name}}",status!~"5.."}[2m]))
             /
-            sum:trace.servlet.request.hits{service:{{args.service-name}},env:lab}.as_count()
+            clamp_min(sum(rate(http_requests_total{service="{{args.service-name}}"}[2m])), 0.0001)
 """
 
-    with open(f"{nome_lab}/manifests/analysis/analysistemplate-datadog.yaml", "w") as f:
-        f.write(analysis_datadog_yaml)
+    with open(f"{nome_lab}/manifests/analysis/analysistemplate-prometheus.yaml", "w") as f:
+        f.write(analysis_prometheus_yaml)
 
     # 5. ArgoCD Application (GitOps sync)
     argocd_app_yaml = """apiVersion: argoproj.io/v1alpha1
@@ -293,11 +292,11 @@ jobs:
 
     # Garantir diretório .github/workflows na raiz do repo
     os.makedirs(".github/workflows", exist_ok=True)
-    with open(".github/workflows/retorno-rollout.yml", "w") as f:
+    with open(".github/workflows/retorno.yml", "w") as f:
         f.write(workflow_yaml)
-    print(f"[+] Workflow criado/atualizado em .github/workflows/retorno-rollout.yml")
+    print(f"[+] Workflow criado/atualizado em .github/workflows/retorno.yml")
 
-    print(f"\n[Sucesso] Laboratório '{nome_lab}' gerado com Canary, Blue/Green, Istio, AnalysisTemplate (Datadog) e ArgoCD Application!")
+    print(f"\n[Sucesso] Laboratório '{nome_lab}' gerado com Canary, Blue/Green, Istio, AnalysisTemplate (Prometheus) e ArgoCD Application!")
 
 if __name__ == "__main__":
     criar_estrutura_lab()

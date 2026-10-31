@@ -1,0 +1,50 @@
+name: Policy as Code
+
+on:
+  pull_request:
+    paths:
+      - "gitops-lab-argo-istio/manifests/**"
+      - "policy/**"
+      - ".github/workflows/policy-check.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "gitops-lab-argo-istio/manifests/**"
+      - "policy/**"
+      - ".github/workflows/policy-check.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  kyverno:
+    name: Kyverno (manifests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validar manifests com Kyverno CLI
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            ghcr.io/kyverno/kyverno-cli:latest \
+            apply policy/kyverno \
+            --resource gitops-lab-argo-istio/manifests
+
+  conftest:
+    name: OPA Conftest (manifests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validar manifests com Conftest
+        run: |
+          docker run --rm \
+            -v "$PWD:/project" \
+            -w /project \
+            openpolicyagent/conftest:v0.55.0 \
+            test --policy policy/conftest \
+            gitops-lab-argo-istio/manifests

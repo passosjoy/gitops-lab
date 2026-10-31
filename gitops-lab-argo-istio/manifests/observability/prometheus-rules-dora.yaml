@@ -1,0 +1,71 @@
+# DORA metrics no Prometheus.
+#
+# Deployment Frequency e Change Failure Rate usam o histórico de sync do Argo CD
+# (argocd_app_sync_total). Lead Time é publicado pelo GitHub Actions no
+# Pushgateway (dora_lead_time_seconds). MTTR é derivado do tempo em que o
+# rollout fica no phase Degraded dividido pelo número de incidentes.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: dora-metrics
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: dora.recording
+      interval: 1m
+      rules:
+        - record: dora:deployments:increase1d
+          expr: sum(increase(argocd_app_sync_total{phase="Succeeded"}[1d]))
+
+        - record: dora:deployments_failed:increase1d
+          expr: sum(increase(argocd_app_sync_total{phase=~"Failed|Error"}[1d]))
+
+        - record: dora:change_failure_rate:ratio1d
+          expr: |
+            sum(increase(argocd_app_sync_total{phase=~"Failed|Error"}[1d]))
+            /
+            clamp_min(sum(increase(argocd_app_sync_total[1d])), 1)
+
+        - record: dora:lead_time_seconds:p50
+          expr: quantile_over_time(0.50, dora_lead_time_seconds[7d])
+
+        - record: dora:lead_time_seconds:p90
+          expr: quantile_over_time(0.90, dora_lead_time_seconds[7d])
+
+        - record: dora:rollout_incidents:count7d
+          expr: sum(changes(rollout_info{phase="Degraded"}[7d])) / 2
+
+        - record: dora:mttr_seconds:avg7d
+          expr: |
+            (
+              sum(avg_over_time(rollout_info{phase="Degraded"}[7d])) * 604800
+            )
+            /
+            clamp_min(dora:rollout_incidents:count7d, 1)
+
+    - name: dora.alerts
+      interval: 1m
+      rules:
+        - alert: RolloutDegraded
+          expr: rollout_info{phase="Degraded"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Rollout {{ $labels.name }} está Degraded"
+            description: >-
+              O rollout {{ $labels.name }} no namespace {{ $labels.namespace }}
+              está degradado há mais de 5 minutos.
+
+        - alert: DoraChangeFailureRateHigh
+          expr: dora:change_failure_rate:ratio1d > 0.15
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Change Failure Rate acima de 15%"
+            description: >-
+              A taxa de falha de sync do Argo CD está em
+              {{ $value | humanizePercentage }} na última janela de 24h.

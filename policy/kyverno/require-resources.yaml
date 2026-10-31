@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-workload-resources
+  annotations:
+    policies.kyverno.io/title: Require CPU/memory requests and limits
+    policies.kyverno.io/severity: medium
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: require-resources
+      match:
+        any:
+          - resources:
+              apiGroups:
+                - argoproj.io
+              kinds:
+                - Rollout
+              namespaces:
+                - gitops-lab
+      validate:
+        message: "Todo container precisa de requests e limits de cpu e memory."
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                  - resources:
+                      requests:
+                        cpu: "?*"
+                        memory: "?*"
+                      limits:
+                        cpu: "?*"
+                        memory: "?*"

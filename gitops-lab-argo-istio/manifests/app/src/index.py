@@ -6,7 +6,7 @@ from datetime import datetime, date
 from functools import wraps
 from urllib.parse import quote_plus
 
-from ddtrace import tracer
+from opentelemetry import trace
 from flask import (
     Flask,
     abort,
@@ -38,13 +38,18 @@ from observability import (
     histogram,
     incr,
     init_metrics,
+    init_tracing,
+    render_metrics,
     setup_logging,
     start_background_faults,
     tag_current_span_error,
+    traced,
 )
 
 setup_logging()
 init_metrics()
+
+tracer = trace.get_tracer(__name__)
 
 app = Flask(
     __name__,
@@ -58,6 +63,8 @@ app.logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
 app.logger.propagate = False
 
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-only-change-me-oficina-rasta")
+
+init_tracing(app)
 
 app_info = {
     "version": VERSION,
@@ -151,7 +158,7 @@ def handle_unexpected_error(exc):
 
 @app.route("/")
 def painel():
-    with tracer.trace("oficina.painel", resource="GET /") as span:
+    with tracer.start_as_current_span("oficina.painel") as span:
         hoje = date.today()
         os_abertas = OrdemServico.query.filter_by(status="AGUARDANDO_ORCAMENTO").count()
         orcamento = OrdemServico.query.filter_by(status="ORCAMENTO_ENVIADO").count()
@@ -181,9 +188,9 @@ def painel():
 
         gauge("oficina.os.em_execucao", em_execucao)
 
-        span.set_tag("os.abertas", os_abertas)
-        span.set_tag("os.em_execucao", em_execucao)
-        span.set_tag("os.atraso", em_atraso)
+        span.set_attribute("os.abertas", os_abertas)
+        span.set_attribute("os.em_execucao", em_execucao)
+        span.set_attribute("os.atraso", em_atraso)
 
     return render_template(
         "painel.html",
@@ -230,7 +237,7 @@ def os_lista():
 
 
 @app.route("/os/nova", methods=["GET", "POST"])
-@tracer.wrap(name="oficina.os.entrada", resource="POST /os/nova")
+@traced("oficina.os.entrada")
 def os_nova():
     if request.method == "POST":
         cliente_id = request.form.get("cliente_id")
@@ -268,7 +275,7 @@ def os_detalhe(os_id):
 
 
 @app.route("/os/<int:os_id>/orcamento", methods=["GET", "POST"])
-@tracer.wrap(name="oficina.orcamento.enviar", resource="POST /os/<id>/orcamento")
+@traced("oficina.orcamento.enviar")
 def os_orcamento(os_id):
     os_obj = OrdemServico.query.get_or_404(os_id)
     if request.method == "POST":
@@ -306,7 +313,7 @@ def os_orcamento(os_id):
 
 
 @app.route("/os/<int:os_id>/aprovar", methods=["POST"])
-@tracer.wrap(name="oficina.orcamento.aprovar", resource="POST /os/<id>/aprovar")
+@traced("oficina.orcamento.aprovar")
 def os_aprovar(os_id):
     os_obj = OrdemServico.query.get_or_404(os_id)
     status_anterior = os_obj.status
@@ -321,7 +328,7 @@ def os_aprovar(os_id):
 
 
 @app.route("/os/<int:os_id>/recusar", methods=["POST"])
-@tracer.wrap(name="oficina.orcamento.recusar", resource="POST /os/<id>/recusar")
+@traced("oficina.orcamento.recusar")
 def os_recusar(os_id):
     os_obj = OrdemServico.query.get_or_404(os_id)
     motivo = request.form.get("motivo")
@@ -336,7 +343,7 @@ def os_recusar(os_id):
 
 
 @app.route("/os/<int:os_id>/execucao/iniciar", methods=["POST"])
-@tracer.wrap(name="oficina.execucao.iniciar", resource="POST /os/<id>/execucao/iniciar")
+@traced("oficina.execucao.iniciar")
 def os_execucao_iniciar(os_id):
     os_obj = OrdemServico.query.get_or_404(os_id)
     status_anterior = os_obj.status
@@ -351,7 +358,7 @@ def os_execucao_iniciar(os_id):
 
 
 @app.route("/os/<int:os_id>/execucao/finalizar", methods=["POST"])
-@tracer.wrap(name="oficina.execucao.finalizar", resource="POST /os/<id>/execucao/finalizar")
+@traced("oficina.execucao.finalizar")
 def os_execucao_finalizar(os_id):
     os_obj = OrdemServico.query.get_or_404(os_id)
     status_anterior = os_obj.status
@@ -371,7 +378,7 @@ def os_execucao_finalizar(os_id):
 
 
 @app.route("/os/<int:os_id>/nota", methods=["GET", "POST"])
-@tracer.wrap(name="oficina.nota.emitir", resource="POST /os/<id>/nota")
+@traced("oficina.nota.emitir")
 def os_nota(os_id):
     os_obj = OrdemServico.query.get_or_404(os_id)
     if request.method == "POST":
@@ -403,7 +410,7 @@ def os_nota(os_id):
 
 
 @app.route("/os/<int:os_id>/entrega", methods=["POST"])
-@tracer.wrap(name="oficina.entrega.finalizar", resource="POST /os/<id>/entrega")
+@traced("oficina.entrega.finalizar")
 def os_entrega(os_id):
     os_obj = OrdemServico.query.get_or_404(os_id)
     status_anterior = os_obj.status
@@ -452,8 +459,7 @@ def version():
 
 @app.route("/metrics")
 def metrics():
-    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-    return generate_latest(), 200, {"Content-Type": CONTENT_TYPE_LATEST}
+    return render_metrics(), 200, {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}
 
 
 app.logger.info("Oficina de Lanternagem e Pintura do Rasta inicializada", extra={"service": SERVICE})

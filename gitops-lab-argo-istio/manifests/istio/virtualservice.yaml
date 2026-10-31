@@ -2,16 +2,22 @@ apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: app-virtualservice
+  namespace: gitops-lab
+  labels:
+    app: minha-aplicacao
+    env: lab
+    owner: devops
 spec:
   hosts:
-  - "minha-app.local"
+    - minha-app.local
   gateways:
-  - mesh
+    - mesh
   http:
-  - route:
-    - destination:
-        host: app-canary-service-primary
-      weight: 100
-    - destination:
-        host: app-canary-service-canary
-      weight: 0
+    - name: primary
+      route:
+        - destination:
+            host: app-canary-service-stable
+          weight: 100
+        - destination:
+            host: app-canary-service-canary
+          weight: 0

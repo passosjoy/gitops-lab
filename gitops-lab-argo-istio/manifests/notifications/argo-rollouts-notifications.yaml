@@ -1,0 +1,102 @@
+# Argo Rollouts Notifications -> Slack + GitHub repository_dispatch.
+#
+# Pré-requisitos:
+#   kubectl apply -n argo-rollouts -f \
+#     https://raw.githubusercontent.com/argoproj/argo-rollouts/stable/manifests/notifications-install.yaml
+#
+#   kubectl -n argo-rollouts create secret generic argo-rollouts-notification-secret \
+#     --from-literal=slack-token="$SLACK_BOT_TOKEN" \
+#     --from-literal=github-token="$GH_PAT" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# Os tokens NÃO ficam no Git: o ConfigMap referencia $slack-token e $github-token
+# e o controller resolve as variáveis a partir do Secret acima.
+#
+# Ajuste SEU-USUARIO/SEU-REPO nos templates do GitHub.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-notification-configmap
+  namespace: argo-rollouts
+data:
+  service.slack: |
+    token: $slack-token
+
+  service.webhook.github: |
+    url: https://api.github.com
+    headers:
+      - name: Authorization
+        value: Bearer $github-token
+      - name: Accept
+        value: application/vnd.github+json
+
+  template.rollout-completed: |
+    message: |
+      :white_check_mark: *Rollout concluído*
+      • Rollout: `{{.rollout.metadata.name}}`
+      • Namespace: `{{.rollout.metadata.namespace}}`
+      • Phase: `{{.rollout.status.phase}}`
+      • Imagem: `{{(index .rollout.spec.template.spec.containers 0).image}}`
+
+  template.rollout-aborted: |
+    message: |
+      :x: *Rollout abortado / degradado*
+      • Rollout: `{{.rollout.metadata.name}}`
+      • Namespace: `{{.rollout.metadata.namespace}}`
+      • Phase: `{{.rollout.status.phase}}`
+      • Imagem: `{{(index .rollout.spec.template.spec.containers 0).image}}`
+      • Ação: `kubectl argo rollouts get rollout {{.rollout.metadata.name}} -n {{.rollout.metadata.namespace}}`
+
+  template.github-completed: |
+    webhook:
+      github:
+        method: POST
+        path: /repos/SEU-USUARIO/SEU-REPO/dispatches
+        body: |
+          {
+            "event_type": "rollout-completed",
+            "client_payload": {
+              "rollout": "{{.rollout.metadata.name}}",
+              "namespace": "{{.rollout.metadata.namespace}}",
+              "sha": "{{.rollout.metadata.annotations.github-sha}}",
+              "status": "{{.rollout.status.phase}}"
+            }
+          }
+
+  template.github-aborted: |
+    webhook:
+      github:
+        method: POST
+        path: /repos/SEU-USUARIO/SEU-REPO/dispatches
+        body: |
+          {
+            "event_type": "rollout-aborted",
+            "client_payload": {
+              "rollout": "{{.rollout.metadata.name}}",
+              "namespace": "{{.rollout.metadata.namespace}}",
+              "sha": "{{.rollout.metadata.annotations.github-sha}}",
+              "status": "{{.rollout.status.phase}}"
+            }
+          }
+
+  # Um trigger por serviço: o template é entregue ao serviço definido na
+  # annotation notifications.argoproj.io/subscribe.<trigger>.<service>.
+  trigger.on-rollout-completed-slack: |
+    - when: rollout.status.phase == "Healthy"
+      oncePer: rollout.status.observedGeneration
+      send: [rollout-completed]
+
+  trigger.on-rollout-aborted-slack: |
+    - when: rollout.status.phase == "Degraded"
+      oncePer: rollout.status.observedGeneration
+      send: [rollout-aborted]
+
+  trigger.on-rollout-completed-github: |
+    - when: rollout.status.phase == "Healthy"
+      oncePer: rollout.status.observedGeneration
+      send: [github-completed]
+
+  trigger.on-rollout-aborted-github: |
+    - when: rollout.status.phase == "Degraded"
+      oncePer: rollout.status.observedGeneration
+      send: [github-aborted]

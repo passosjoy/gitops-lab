@@ -1,0 +1,29 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-workload-labels
+  annotations:
+    policies.kyverno.io/title: Require ownership labels
+    policies.kyverno.io/severity: medium
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: require-app-env-owner
+      match:
+        any:
+          - resources:
+              apiGroups:
+                - argoproj.io
+              kinds:
+                - Rollout
+              namespaces:
+                - gitops-lab
+      validate:
+        message: "Labels obrigatórias: app, env e owner."
+        pattern:
+          metadata:
+            labels:
+              app: "?*"
+              env: "?*"
+              owner: "?*"

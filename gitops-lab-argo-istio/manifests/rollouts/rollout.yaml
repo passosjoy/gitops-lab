@@ -2,8 +2,22 @@ apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
   name: app-canary-service
+  namespace: gitops-lab
+  labels:
+    app: minha-aplicacao
+    env: lab
+    owner: devops
+  annotations:
+    notifications.argoproj.io/subscribe.on-rollout-completed-slack.slack: sre-rollouts
+    notifications.argoproj.io/subscribe.on-rollout-aborted-slack.slack: sre-rollouts
+    notifications.argoproj.io/subscribe.on-rollout-completed-github.github: dora
+    notifications.argoproj.io/subscribe.on-rollout-aborted-github.github: dora
+    # Preenchido pelo CI/Kustomize para o workflow calcular o Lead Time.
+    # github-sha: "0000000000000000000000000000000000000000"
 spec:
   replicas: 3
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
   selector:
     matchLabels:
       app: minha-aplicacao
@@ -11,12 +25,55 @@ spec:
     metadata:
       labels:
         app: minha-aplicacao
+        env: lab
+        owner: devops
+      annotations:
+        sidecar.istio.io/inject: "true"
     spec:
       containers:
-      - name: web
-        image: minha-imagem:v1.0.0
-        ports:
-        - containerPort: 8080
+        - name: web
+          image: minha-imagem:v1.0.0
+          ports:
+            - name: http
+              containerPort: 5000
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: oficina-lanternagem-do-rasta
+            - name: APP_ENV
+              value: lab
+            - name: APP_VERSION
+              value: v1.0.0
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4318
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
+            # O restante do ambiente (DB_*, FLASK_SECRET_KEY, etc.) deve vir de
+            # ConfigMap/Secret da aplicação.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
   strategy:
     canary:
       trafficRouting:
@@ -24,9 +81,19 @@ spec:
           virtualService:
             name: app-virtualservice
             routes:
-            - primary
+              - primary
+      analysis:
+        templates:
+          - templateName: app-success-rate
+        startingStep: 1
+        args:
+          - name: service-name
+            value: oficina-lanternagem-do-rasta
       steps:
-      - setWeight: 10
-      - pause: { duration: 5m }
-      - setWeight: 50
-      - pause: { duration: 5m }
+        - setWeight: 10
+        - pause:
+            duration: 5m
+        - setWeight: 50
+        - pause:
+            duration: 5m
+        - setWeight: 100

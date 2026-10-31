@@ -10,7 +10,49 @@ jobs:
     env:
       SHA: ${{ github.event.client_payload.sha }}
       EVENT: ${{ github.event.action }}
+      ROLLOUT_NAME: ${{ github.event.client_payload.rollout }}
+      NAMESPACE: ${{ github.event.client_payload.namespace }}
+      PUSHGATEWAY_URL: ${{ vars.PUSHGATEWAY_URL }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-    - name: Notificar Status do Rollout
-      run: |
-        echo "Recebido evento de rollout: $EVENT para o commit $SHA"
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Registrar evento
+        run: |
+          echo "==============================================="
+          echo "GitOps Progressive Delivery - Rollout Callback"
+          echo "==============================================="
+          echo "Evento: $EVENT"
+          echo "Rollout: ${ROLLOUT_NAME:-desconhecido}"
+          echo "Namespace: ${NAMESPACE:-desconhecido}"
+          echo "Commit SHA: ${SHA:-desconhecido}"
+          echo "==============================================="
+
+      # Lead Time for Changes = agora - timestamp do commit.
+      # Publica no Pushgateway para o Prometheus calcular p50/p90.
+      - name: Publicar lead time no Pushgateway
+        if: env.EVENT == 'rollout-completed' && env.PUSHGATEWAY_URL != '' && env.SHA != ''
+        run: |
+          if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
+            echo "Commit $SHA não encontrado no checkout; pulando lead time."
+            exit 0
+          fi
+          COMMIT_TS=$(git show -s --format=%ct "$SHA")
+          LEAD_TIME=$(( $(date +%s) - COMMIT_TS ))
+          APP="${ROLLOUT_NAME:-app-canary-service}"
+          echo "Lead time de ${LEAD_TIME}s (commit $SHA)"
+          cat <<EOF | curl -fsS --data-binary @- "${PUSHGATEWAY_URL%/}/metrics/job/dora/app/${APP}/sha/${SHA}"
+          # TYPE dora_lead_time_seconds gauge
+          dora_lead_time_seconds ${LEAD_TIME}
+          EOF
+
+      - name: Notificar Slack (fallback do Argo Rollouts Notifications)
+        if: env.SLACK_WEBHOOK_URL != ''
+        run: |
+          curl -fsS -X POST \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"Rollout *${ROLLOUT_NAME:-desconhecido}* (${NAMESPACE:-?}) -> *${EVENT}* no commit ${SHA:-?}\"}" \
+            "$SLACK_WEBHOOK_URL"

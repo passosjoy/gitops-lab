@@ -1,6 +1,6 @@
-# Laboratório Completo: GitOps com Argo Rollouts, Istio, Argo CD, GitHub Actions e Datadog
+# Laboratório Completo: GitOps com Argo Rollouts, Istio, Argo CD, GitHub Actions e Observabilidade Open Source
 
-> Do iniciante ao avançado. Focado em **Progressive Delivery** (Canary e Blue/Green), **Service Mesh com Istio**, **GitOps com Argo CD**, **automação com GitHub Actions** e **observabilidade com Datadog**.
+> Do iniciante ao avançado. Focado em **Progressive Delivery** (Canary e Blue/Green), **Service Mesh com Istio**, **GitOps com Argo CD**, **automação com GitHub Actions** e **observabilidade self-hosted com Prometheus, Grafana, Tempo e OpenTelemetry**.
 
 ## Índice
 
@@ -31,15 +31,16 @@
   - [Etapa 4: Preparar Namespace e Injeção Sidecar](#etapa-4-preparar-namespace-e-injeção-sidecar)
   - [Etapa 5: Configurar Argo CD Application](#etapa-5-configurar-argo-cd-application)
   - [Etapa 6: Habilitar Notificações Argo Rollouts + GitHub](#etapa-6-habilitar-notificações-argo-rollouts--github)
-  - [Etapa 7: Integrar com Datadog (Observabilidade)](#etapa-7-integrar-com-datadog-observabilidade)
+  - [Etapa 7: Observabilidade com Prometheus, Grafana, Tempo e OpenTelemetry](#etapa-7-observabilidade-com-prometheus-grafana-tempo-e-opentelemetry)
   - [Etapa 8: Aplicar Manifestos do Laboratório](#etapa-8-aplicar-manifestos-do-laboratório)
 - [10. Executando os Deploys Progressivos](#10-executando-os-deploys-progressivos)
   - [10.1 Canary com Argo Rollouts + Istio](#101-canary-com-argo-rollouts--istio)
   - [10.2 Blue/Green com Argo Rollouts + Istio](#102-bluegreen-com-argo-rollouts--istio)
 - [11. Validação, Rollback e Troubleshooting](#11-validação-rollback-e-troubleshooting)
 - [12. Checklist de Segurança (Repo + Branch + Deploy)](#12-checklist-de-segurança-repo--branch--deploy)
-- [13. Dicas para Evoluir o Laboratório](#13-dicas-para-evoluir-o-laboratório)
-- [14. Referências](#14-referências)
+- [13. Notificações, DORA Metrics e Policy as Code](#13-notificações-dora-metrics-e-policy-as-code)
+- [14. Dicas para Evoluir o Laboratório](#14-dicas-para-evoluir-o-laboratório)
+- [15. Referências](#15-referências)
 
 ## 1. Objetivo
 
@@ -49,7 +50,10 @@ Este laboratório tem como objetivo ensinar, na prática, como implementar um fl
 - **[Argo Rollouts](https://argo-rollouts.readthedocs.io/)** - Estratégias avançadas de deploy (Canary, Blue/Green, análise e promoção automatizada/manual).
 - **[Istio](https://istio.io/latest/docs/)** - Service Mesh para roteamento inteligente de tráfego, observabilidade e resiliência.
 - **[GitHub Actions](https://docs.github.com/pt/actions)** - Automação, callbacks de rollout e integração com o fluxo GitOps.
-- **[Datadog](https://docs.datadoghq.com/)** - Métricas, APM, logs e validação de saúde da aplicação durante o progressive delivery.
+- **[OpenTelemetry](https://opentelemetry.io/)** - Instrumentação padronizada de traces e correlação com logs.
+- **[Prometheus](https://prometheus.io/)** + **[Grafana](https://grafana.com/)** - Métricas, alertas e dashboards self-hosted, sem custo por host.
+- **[Grafana Tempo](https://grafana.com/oss/tempo/)** - Backend de traces compatível com OTLP.
+- **[Argo Rollouts Analysis](https://argo-rollouts.readthedocs.io/en/stable/features/analysis/)** - Validação automática do canary com queries Prometheus.
 
 A ideia é ir **do conceito ao deploy real**, entendendo o "porquê" de cada etapa.
 
@@ -135,16 +139,24 @@ Diferente de um "deploy tudo ou nada", **Progressive Delivery** permite expor a 
                                         │           ▼                    ▼        │
                                         │      Rollout(Canary/BlueGreen) <-> VS/DR │
                                         └─────────────┬───────────────────────────┘
-                                                      │ Métricas/Traces/Logs
+                                                      │ /metrics + OTLP
                                                       ▼
-                                                   ┌────────┐
-                                                   │ Datadog │ (Observabilidade + Analysis)
-                                                   └────────┘
-                                                      │ eventos
-                                                      ▼
+                                        ┌────────────────────────────────┐
+                                        │  Observability (namespace)      │
+                                        │   Prometheus ◄── Pushgateway    │
+                                        │   Grafana    ◄── Tempo          │
+                                        │   OTel Collector ──► Tempo      │
+                                        └───────────────┬────────────────┘
+                                                        │ AnalysisTemplate
+                                                        ▼
                                                 ┌─────────────────┐
-                                                │ GitHub Actions   │ (repository_dispatch)
-                                                │ retorno-rollout  │ (notificações/integração)
+                                                │  Argo Rollouts  │  (rollback automático)
+                                                └────────┬────────┘
+                                                         │ eventos
+                                                         ▼
+                                                ┌─────────────────┐
+                                                │ Slack / Teams   │
+                                                │ GitHub Actions  │  (DORA lead time)
                                                 └─────────────────┘
 ```
 
@@ -230,15 +242,15 @@ O `repository_dispatch` permite **disparar workflows remotamente** via API do Gi
 
 ### 6.2 Workflow de Callback
 
-O arquivo `.github/workflows/retorno-rollout.yml` já foi criado/atualizado neste repositório. Ele escuta os eventos:
+O arquivo `.github/workflows/retorno.yml` já foi criado/atualizado neste repositório. Ele escuta os eventos:
 
 ```yaml
 on:
   repository_dispatch:
-    types: [rollout-completed, rollout-aborted, rollout-paused]
+    types: [rollout-completed, rollout-aborted]
 ```
 
-Ele recebe `client_payload` com informações como `sha`, `rollout`, `namespace`. Isso permite rastrear **qual commit** gerou aquele rollout.
+Ele recebe `client_payload` com informações como `sha`, `rollout`, `namespace`. Isso permite rastrear **qual commit** gerou aquele rollout e calcular o **Lead Time for Changes** (commit -> rollout concluído), publicado no Pushgateway.
 
 ### 6.3 Conectando Argo Rollouts ao GitHub Actions
 
@@ -246,13 +258,13 @@ Existem duas abordagens comuns:
 
 #### A) Argo Rollouts Notifications (recomendada neste lab)
 
-O Argo Rollouts possui o módulo **Notifications**. Você pode configurar para enviar eventos via **webhook** para a API do GitHub `repository_dispatch`.
+O Argo Rollouts possui o módulo **Notifications**. Neste repositório ele está configurado em `gitops-lab-argo-istio/manifests/notifications/argo-rollouts-notifications.yaml` para enviar eventos ao **Slack**.
 
-Exemplo conceitual (configurar via `ConfigMap`/`Secret`):
+- **Trigger**: `on-rollout-completed`, `on-rollout-aborted`
+- **Template**: mensagem com rollout, namespace, phase e imagem
+- **Service**: `service.slack` com token lido do Secret `argo-rollouts-notification-secret`
 
-- **Trigger**: `on-rollout-completed`, `on-rollout-aborted`, `on-analysis-run-failed`
-- **Template**: Monta JSON com `event_type` e `client_payload`
-- **Service**: Webhook apontando para `https://api.github.com/repos/<ORG>/<REPO>/dispatches` com `Authorization: Bearer <GITHUB_TOKEN>`
+O mesmo módulo pode enviar para **Teams** via `service.webhook` ou para a API do GitHub (`repository_dispatch`). O workflow `.github/workflows/retorno.yml` continua sendo o ponto de integração com CI e com o Pushgateway de DORA metrics.
 
 #### B) CI/CD via GitHub Actions chamando `kubectl argo rollouts`
 
@@ -264,12 +276,20 @@ Você também pode orquestrar com GitHub Actions usando `kubectl` + plugin `argo
 
 Crie os seguintes **Secrets** no GitHub (`Settings > Secrets and variables > Actions`):
 
-| Secret | Obrigatório | Descrição |
+| Secret / Variable | Obrigatório | Descrição |
 |---|---|---|
 | `GITHUB_TOKEN` | Sim (padrão) | Já disponível. Usado para `repository_dispatch`. |
 | `ARGOCD_AUTH_TOKEN` / `KUBE_CONFIG` | Opcional | Caso queira promover via GitHub Actions diretamente. |
-| `DATADOG_API_KEY` / `DATADOG_APP_KEY` | Sim (se usar Analysis com Datadog) | Usados pelo Argo Rollouts AnalysisTemplate/provider Datadog. |
+| `SLACK_WEBHOOK_URL` (Secret) | Opcional | Fallback de notificação no workflow. O canal principal é o Argo Rollouts Notifications. |
+| `PUSHGATEWAY_URL` (Variable) | Opcional | URL pública do Pushgateway para publicar o Lead Time. Ex.: `https://pushgateway.example.com`. |
 | `GH_PAT` | Opcional | Caso precise de permissões mais amplas para dispatch entre repos. |
+
+No **cluster**, crie os Secrets (nunca no Git):
+
+| Secret Kubernetes | Namespace | Uso |
+|---|---|---|
+| `grafana-admin` (`admin-user`, `admin-password`) | `observability` | Login do Grafana. |
+| `argo-rollouts-notification-secret` (`slack-token`) | `argo-rollouts` | Token do Slack Bot usado pelo Notifications. |
 
 > **Nunca commitar secrets no repositório. Use apenas Secrets/External Secrets/Vault.**
 
@@ -287,7 +307,7 @@ Antes de iniciar, garanta que você possui:
 | **Argo Rollouts Plugin** | Última estável | `kubectl argo rollouts` para inspecionar/promover/abortar. |
 | **Git** | 2.x | Para versionar e commitar. |
 | **Conta GitHub** | Com permissão para editar Actions/Settings | Necessário para proteções e workflows. |
-| **Conta Datadog** | Com API/App Keys | Necessário para `AnalysisTemplate` com Datadog. |
+| **Conta SaaS de observabilidade** | Não necessária | A stack é self-hosted: Prometheus, Grafana, Tempo e OTel Collector rodam no cluster. |
 
 ## 8. Estrutura do Repositório
 
@@ -297,29 +317,44 @@ Após a geração, sua estrutura ficará similar a esta:
 gitops/
 ├── .github/
 │   └── workflows/
-│       └── retorno-rollout.yml        # Callback GitHub Actions
+│       ├── policy-check.yaml          # Kyverno + Conftest no CI
+│       └── retorno.yml                # Callback + DORA lead time
 ├── .opencode/
 │   └── skills/
 │       └── gitops-lab-generator/      # Skill para gerar laboratórios
 ├── gitops-lab-argo-istio/
-│   ├── argocd/
-│   │   └── application.yaml          # ArgoCD Application
+│   ├── argocd/                        # Argo CD Application (crie/ajuste)
 │   ├── manifests/
 │   │   ├── analysis/
-│   │   │   └── analysistemplate-datadog.yaml
-│   │   ├── app/                      # Services, ConfigMaps, etc (app já orquestrada c/ Datadog)
+│   │   │   └── analysistemplate-prometheus.yaml
+│   │   ├── app/
+│   │   │   └── src/                   # Código Flask + Dockerfile
 │   │   ├── istio/
-│   │   │   └── virtualservice-destinationrule.yaml
+│   │   │   └── virtualservice.yaml
+│   │   ├── notifications/
+│   │   │   └── argo-rollouts-notifications.yaml
+│   │   ├── observability/
+│   │   │   ├── grafana-dashboard-dora.yaml
+│   │   │   ├── otel-collector.yaml
+│   │   │   ├── prometheus-rules-dora.yaml
+│   │   │   ├── scrape-configs.yaml
+│   │   │   └── tempo.yaml
 │   │   └── rollouts/
-│   │       ├── bluegreen/
-│   │       │   └── rollout-bluegreen.yaml
-│   │       └── canary/
-│   │           └── rollout-canary.yaml
-│   └── docs/                         # Espaço para anotações futuras
-└── README.md                         # Este arquivo
+│   │       └── rollout.yaml
+│   └── values/
+│       └── kube-prometheus-stack-values.yaml
+├── policy/
+│   ├── conftest/
+│   │   └── kubernetes.rego
+│   └── kyverno/
+│       ├── disallow-latest-tag.yaml
+│       ├── disallow-privileged.yaml
+│       ├── require-labels.yaml
+│       └── require-resources.yaml
+└── README.md                          # Este arquivo
 ```
 
-> A sua aplicação já foi copiada/orquestrada com **Datadog**. Coloque os manifestos da aplicação em `gitops-lab-argo-istio/manifests/app/` (Deployment base, Service, ServiceAccount, etc). Os `Rollout` irão **gerenciar as revisões** (muitas vezes substituindo/estendendo a lógica do Deployment para Progressive Delivery).
+> A aplicação em `manifests/app/src/` expõe métricas em `/metrics` e envia traces via OTLP. Os manifestos base (Deployment/Service/ConfigMap da aplicação) podem ser adicionados em `manifests/app/`; o `Rollout` é quem **gerencia as revisões** e o tráfego.
 
 ## 9. Passo a Passo: Do Zero ao Avançado
 
@@ -433,107 +468,146 @@ O Argo Rollouts Notifications precisa ser configurado. Existem 2 caminhos:
 kubectl apply -n argo-rollouts -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/manifests/notifications-install.yaml
 ```
 
-#### Opção B: Configurar ConfigMap + Secret
+#### Opção B: ConfigMap + Secret do repositório
 
-Crie um Secret com o token para GitHub:
+O arquivo `gitops-lab-argo-istio/manifests/notifications/argo-rollouts-notifications.yaml` já contém o `ConfigMap` completo com **Slack** e **GitHub `repository_dispatch`**. Falta apenas criar o Secret com os tokens (nunca commitar):
 
 ```bash
-# Gere um PAT (classic) com scope "repo" ou use GITHUB_TOKEN com cuidado
-kubectl create secret generic github-token \
-  --from-literal=token=ghp_SEU_PERSONAL_ACCESS_TOKEN \
-  -n argo-rollouts
+kubectl -n argo-rollouts create secret generic argo-rollouts-notification-secret \
+  --from-literal=slack-token="$SLACK_BOT_TOKEN" \
+  --from-literal=github-token="$GH_PAT" \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Crie/edite `argo-rollouts-notification-configmap` com:
+Aplique o `ConfigMap` e ajuste `SEU-USUARIO/SEU-REPO` nos templates `github-*`:
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argo-rollouts-notification-configmap
-  namespace: argo-rollouts
-data:
-  service.webhook.github: |
-    url: https://api.github.com
-    headers:
-    - name: Authorization
-      value: Bearer $github-token
-    - name: Accept
-      value: application/vnd.github+json
-  template.github-dispatch: |
-    webhook:
-      github:
-        method: POST
-        path: /repos/SEU-USUARIO/SEU-REPO/dispatches
-        body: |
-          {
-            "event_type": "{{.rollout.metadata.annotations.notifications.argoproj.io/github-event-type}}",
-            "client_payload": {
-              "rollout": "{{.rollout.metadata.name}}",
-              "namespace": "{{.rollout.metadata.namespace}}",
-              "sha": "{{.rollout.metadata.annotations.github-sha}}",
-              "status": "{{.rollout.status.phase}}"
-            }
-          }
-  trigger.on-rollout-completed: |
-    - when: rollout.status.phase == 'Healthy'
-      send: [github-dispatch]
-      oncePer: rollout.status.observedGeneration
-  trigger.on-rollout-aborted: |
-    - when: rollout.status.phase == 'Degraded'
-      send: [github-dispatch]
-      oncePer: rollout.status.observedGeneration
+```bash
+kubectl apply -f gitops-lab-argo-istio/manifests/notifications/argo-rollouts-notifications.yaml
 ```
 
-Adicione anotações ao seu `Rollout` para disparar:
+O `ConfigMap` define:
+
+- `service.slack` e `service.webhook.github` (tokens lidos de `$slack-token` / `$github-token`);
+- templates `rollout-completed`, `rollout-aborted`, `github-completed`, `github-aborted`;
+- triggers separados por serviço (`on-rollout-completed-slack`, `on-rollout-aborted-slack`, `on-rollout-completed-github`, `on-rollout-aborted-github`).
+
+O `Rollout` então se inscreve nos triggers por anotação:
 
 ```yaml
 metadata:
   annotations:
-    notifications.argoproj.io/subscribe.on-rollout-completed.github: "rollout-completed"
-    notifications.argoproj.io/subscribe.on-rollout-aborted.github: "rollout-aborted"
+    notifications.argoproj.io/subscribe.on-rollout-completed-slack.slack: sre-rollouts
+    notifications.argoproj.io/subscribe.on-rollout-aborted-slack.slack: sre-rollouts
+    notifications.argoproj.io/subscribe.on-rollout-completed-github.github: dora
+    notifications.argoproj.io/subscribe.on-rollout-aborted-github.github: dora
+    github-sha: "0000000000000000000000000000000000000000"  # preenchido pelo CI
 ```
 
-> Ajuste `event_type` para bater com os tipos definidos no `.github/workflows/retorno-rollout.yml` (`rollout-completed`, `rollout-aborted`, `rollout-paused`).
+> A anotação `github-sha` é o que permite ao workflow `.github/workflows/retorno.yml` calcular o **Lead Time for Changes** (commit → rollout concluído). Sem ela o evento chega, mas o lead time é ignorado.
 
-### Etapa 7: Integrar com Datadog (Observabilidade)
+### Etapa 7: Observabilidade com Prometheus, Grafana, Tempo e OpenTelemetry
 
-Como sua aplicação já está orquestrada com **Datadog**, garanta:
+A stack é **self-hosted** e não depende de nenhum SaaS. Componentes:
 
-1. **Datadog Agent** instalado no cluster (DaemonSet) com APM habilitado.
-2. **Labels/annotations** corretas nos pods (ex: `tags.datadoghq.com/service`, `tags.datadoghq.com/env`, `tags.datadoghq.com/version`).
-3. **APM Tracing** habilitado na aplicação.
-4. **Logs** sendo coletados (pode usar `ad.datadoghq.com/*` annotations).
-5. **API Key + APP Key** criados no Datadog (`Organization Settings > API Keys / Application Keys`).
+| Componente | Papel |
+|---|---|
+| OpenTelemetry SDK | Instrumenta a aplicação (traces + correlação de logs). |
+| OTel Collector | Recebe OTLP e encaminha para o Tempo. |
+| Prometheus + Operator | Coleta métricas via `PodMonitor`/`ServiceMonitor` e avalia regras DORA. |
+| Pushgateway | Recebe o lead time publicado pelo GitHub Actions. |
+| Tempo | Armazena traces. |
+| Grafana | Dashboards (DORA, latência, erros) e datasource Tempo. |
+| Alertmanager | Roteia alertas (ex.: `RolloutDegraded`). |
 
-Edite `manifests/analysis/analysistemplate-datadog.yaml` com sua query real. Exemplo genérico:
+#### Passo 1: Instalar a stack
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl -n observability create secret generic grafana-admin \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  -n observability \
+  --values gitops-lab-argo-istio/values/kube-prometheus-stack-values.yaml
+```
+
+#### Passo 2: Aplicar Tempo, Collector, scrape configs, regras e dashboard
+
+```bash
+kubectl apply -f gitops-lab-argo-istio/manifests/observability/
+```
+
+Isso cria `tempo`, `otel-collector`, `PodMonitor`/`ServiceMonitor` (app, Collector, Argo CD, Argo Rollouts), `PrometheusRule` de DORA e o dashboard `DORA Metrics - GitOps Lab` (provisionado automaticamente pelo sidecar do Grafana).
+
+#### Passo 3: Instrumentação da aplicação
+
+A aplicação em `manifests/app/src/` já está pronta:
+
+- `observability.py` configura o SDK OTel (OTLP HTTP), JSON logs com `trace_id`/`span_id` e métricas `prometheus_client` em modo multiprocess;
+- `index.py` usa `@traced("...")` e `tracer.start_as_current_span(...)` no lugar do `ddtrace`;
+- `/metrics` expõe `oficina_http_requests_total`, `oficina_http_requests_good_total`, `oficina_http_request_duration_milliseconds_bucket` e `oficina_http_errors_total`, todas com label `service`.
+
+Variáveis relevantes no `Rollout`:
 
 ```yaml
-query: |
-  (sum:trace.servlet.request.hits{service:{{args.service-name}},env:lab} - 
-   sum:trace.servlet.request.errors{service:{{args.service-name}},env:lab}) /
-  sum:trace.servlet.request.hits{service:{{args.service-name}},env:lab} * 100
+env:
+  - name: OTEL_SERVICE_NAME
+    value: oficina-lanternagem-do-rasta
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: http://otel-collector.observability.svc.cluster.local:4318
+  - name: PROMETHEUS_MULTIPROC_DIR
+    value: /tmp/prometheus-multiproc
 ```
 
-**Importante:** O provider `datadog` no Argo Rollouts Analysis precisa ter acesso às credenciais. Configure `secret`/env para o controller ou siga a documentação oficial conforme sua versão.
+#### Passo 4: Análise automática do canary
 
-**Métricas úteis para análise:** `error rate`, `p50/p90/p99 latency`, `apdex`, `request rate`, `5xx`.
+O `manifests/analysis/analysistemplate-prometheus.yaml` consulta o Prometheus diretamente:
+
+```yaml
+provider:
+  prometheus:
+    address: http://kube-prometheus-stack-prometheus.observability.svc.cluster.local:9090
+    query: |
+      sum(rate(oficina_http_requests_good_total{service="{{args.service-name}}"}[2m]))
+      /
+      clamp_min(sum(rate(oficina_http_requests_total{service="{{args.service-name}}"}[2m])), 0.0001)
+```
+
+O `Rollout` referencia o template com `analysis.templates[].templateName: app-success-rate` e `startingStep: 1`.
+
+#### Passo 5: Acessar Grafana
+
+```bash
+kubectl -n observability port-forward svc/kube-prometheus-stack-grafana 3000:80
+# http://localhost:3000  (admin / $GRAFANA_ADMIN_PASSWORD)
+```
+
+Dashboards esperados: **DORA Metrics - GitOps Lab**, **Kubernetes / Compute Resources**, e o datasource **Tempo** para abrir traces a partir dos logs (via `trace_id`).
+
+**Métricas úteis para análise:** `error rate`, `p50/p95/p99 latency`, `request rate`, `5xx` e as séries `dora:*` (Deployment Frequency, Change Failure Rate, Lead Time, MTTR).
 
 ### Etapa 8: Aplicar Manifestos do Laboratório
 
 Antes de aplicar, **revise e ajuste** os arquivos:
 
-- `manifests/app/` - Coloque seus manifests reais da aplicação (Services, etc). Garanta que o Service baterá com o que o Rollout espera.
-- `manifests/istio/virtualservice-destinationrule.yaml` - Ajuste `hosts`, `gateways`, `subsets` e labels para casar com seu `Rollout`.
-- `manifests/rollouts/canary/rollout-canary.yaml` - Ajuste `image`, `replicas`, `steps`, `analysis`.
-- `manifests/rollouts/bluegreen/rollout-bluegreen.yaml` - Ajuste `activeService`, `previewService`, gates.
+- `manifests/rollouts/rollout.yaml` — ajuste `image`, `replicas`, `steps`, `analysis` e a anotação `github-sha`.
+- `manifests/istio/virtualservice.yaml` — ajuste `hosts`, `gateways` e o nome da rota (`primary` deve casar com `strategy.canary.trafficRouting.istio.virtualService.routes`).
+- `manifests/analysis/analysistemplate-prometheus.yaml` — ajuste `service-name` e os thresholds (99% de sucesso, p95 < 500 ms).
+- `manifests/observability/` — scrape configs e regras DORA.
+- `values/kube-prometheus-stack-values.yaml` — retenção, recursos e Pushgateway.
 
 Aplicação via Argo CD (recomendado):
 
 ```bash
 # Commit e push
 git add .
-git commit -m "feat: adiciona laboratório GitOps Argo Rollouts + Istio + Datadog"
+git commit -m "feat: GitOps com Argo Rollouts + Istio + observabilidade open source"
 git push origin main
 ```
 
@@ -548,7 +622,7 @@ argocd app sync gitops-lab-app
 
 ### 10.1 Canary com Argo Rollouts + Istio
 
-**Cenário:** Lançar `v2.0.0` com exposição gradual, validando com `AnalysisTemplate` (Datadog) a cada etapa.
+**Cenário:** Lançar `v2.0.0` com exposição gradual, validando com `AnalysisTemplate` (Prometheus) a cada etapa.
 
 #### Passo 1: Atualizar imagem
 
@@ -589,7 +663,7 @@ Com a configuração atual:
 
 1. `setWeight: 5` -> 5% do tráfego para canary
 2. `pause: 2m` -> Aguarda tempo para análise/observação
-3. `analysis` -> Executa query Datadog. Se falhar (abaixo do threshold) ou exceder `failureLimit` -> **aborta** e volta 100% para stable
+3. `analysis` -> Executa query Prometheus. Se falhar (abaixo do threshold) ou exceder `failureLimit` -> **aborta** e volta 100% para stable
 4. `setWeight: 20` -> Aumenta gradualmente
 5. Continua até `setWeight: 100` e finaliza como **Healthy**
 
@@ -694,7 +768,7 @@ kubectl get analysisrun -n gitops-lab
 | Problema | Possível Causa | Solução |
 |---|---|---|
 | **Rollout travado em "Progressing"** | Falta `VirtualService`/`DestinationRule` ou labels errados | Verificar `trafficRouting.istio`, subsets e labels dos pods. |
-| **Analysis falha sempre** | Query Datadog errada, chaves ausentes ou serviço sem tráfego | Testar query no Datadog. Garantir que há hits/erros no intervalo. Ver logs do analysisrun. |
+| **Analysis falha sempre** | Query Prometheus errada, Prometheus inacessível ou serviço sem tráfego | Testar a query no Prometheus/Grafana. Garantir `/metrics` disponível e `PodMonitor` aplicado. Ver `kubectl describe analysisrun -n gitops-lab`. |
 | **Sidecar não injetado** | Namespace sem label `istio-injection=enabled` | `kubectl label ns gitops-lab istio-injection=enabled` e recriar pods. |
 | **Argo CD fora de sync** | Caminho errado ou repo privado sem credenciais | Verificar `repoURL`, `path` e credenciais em `Settings > Repositories`. |
 | **GitHub Actions não dispara** | Erro na config de notificações/webhook ou token inválido | Validar `ConfigMap`, Secret `github-token`, permissões do PAT e logs do controller. |
@@ -733,7 +807,7 @@ kubectl get analysisrun -n gitops-lab
 
 ### GitOps/Progressive Delivery
 
-- [ ] **Análises com métricas reais** (Datadog/Prometheus) antes de aumentar peso
+- [ ] **Análises com métricas reais** (Prometheus) antes de aumentar peso
 - [ ] **`failureLimit`** definido para abortar automaticamente
 - [ ] **`autoPromotionEnabled: false`** em PROD para Blue/Green (promover com critério)
 - [ ] **Pausas com tempo suficiente** para coleta de métricas
@@ -745,12 +819,12 @@ kubectl get analysisrun -n gitops-lab
 
 | Evolução | Descrição | Prioridade |
 |---|---|---|
-| **Prometheus + Analysis** | Trocar/substituir por `AnalysisTemplate` com Prometheus (complementar ao Datadog) | Alta |
+| **Prometheus + Analysis** | Já implementado em `manifests/analysis/analysistemplate-prometheus.yaml` com validação automática de canary | Alta |
 | **Flagger** | Comparar Flagger vs Argo Rollouts para entender trade-offs | Média-Alta |
 | **Sealed Secrets / External Secrets** | Gerenciar secrets sem expor no Git | **Alta (produção)** |
 | **Kustomize/Helm** | Tornar manifests reutilizáveis por ambiente (overlays `dev/hml/prod`) | Alta |
 | **Slack/Teams Notifications** | Enviar status de rollout para canal de engenharia | Média |
-| **OpenTelemetry** | Padronizar traces e correlacionar com Datadog | Média-Alta |
+| **OpenTelemetry** | Já implementado: SDK, Collector, envio OTLP para Tempo, correlação de logs com `trace_id`/`span_id` | Média-Alta |
 | **Chaos Engineering** | Testar resiliência com Litmus/ChaosMesh durante Canary | Avançado |
 | **Policy as Code** | Validar manifests com OPA Conftest/Kyverno | Avançado |
 
@@ -762,12 +836,15 @@ kubectl get analysisrun -n gitops-lab
 - [Istio Traffic Management](https://istio.io/latest/docs/concepts/traffic-management/)
 - [GitHub Actions - repository_dispatch](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event)
 - [GitHub Docs - Branch protection rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
-- [Datadog APM](https://docs.datadoghq.com/tracing/)
-- [CNCF GitOps Principles](https://opengitops.dev/)
-- [Progressive Delivery](https://www.weave.works/blog/what-is-progressive-delivery-all-about)
+- [Prometheus Documentation](https://prometheus.io/docs/)
+- [Grafana Documentation](https://grafana.com/docs/)
+- [Grafana Tempo](https://grafana.com/docs/tempo/)
+- [OpenTelemetry](https://opentelemetry.io/docs/)
+- [Argo Rollouts Analysis](https://argo-rollouts.readthedocs.io/en/stable/features/analysis/)
+- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
 
 ---
 
-**Autor:** Laboratório GitOps Argo + Istio + Datadog  
-**Foco:** Aprendizado prático do básico ao avançado com ênfase em **segurança, observabilidade e governança Git**  
+**Autor:** Laboratório GitOps Argo + Istio + Prometheus/Grafana/Tempo/OpenTelemetry  
+**Foco:** Aprendizado prático do básico ao avançado com ênfase em **segurança, observabilidade self-hosted e governança Git**  
 **Status:** Pronto para execução no cluster configurado.
