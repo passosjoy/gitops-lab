@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-file-earmark-text"></i> OS {{ os.numero_os }}</h2>
+    <span class="badge bg-dark fs-6">{{ os.status }}</span>
+</div>
+<div class="row g-3">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-dark text-white">Cliente & Veículo</div>
+            <div class="card-body">
+                <p><strong>Cliente:</strong> {{ os.cliente.nome }} | {{ os.cliente.telefone }}</p>
+                <p><strong>Veículo:</strong> {{ os.veiculo_marca }} {{ os.veiculo_modelo }} | Placa: {{ os.placa }} | KM: {{ os.km }}</p>
+                <p><strong>Sintoma:</strong> {{ os.sintoma }}</p>
+                <p><strong>Responsável:</strong> {{ os.responsavel }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-dark text-white">Datas</div>
+            <div class="card-body">
+                <p>Entrada: {{ os.data_entrada.strftime('%d/%m/%Y %H:%M') if os.data_entrada }}</p>
+                <p>Aprovação Orçamento: {{ os.data_aprovacao_orcamento.strftime('%d/%m/%Y %H:%M') if os.data_aprovacao_orcamento }}</p>
+                <p>Início Execução: {{ os.data_inicio_execucao.strftime('%d/%m/%Y %H:%M') if os.data_inicio_execucao }}</p>
+                <p>Finalização: {{ os.data_finalizacao.strftime('%d/%m/%Y %H:%M') if os.data_finalizacao }}</p>
+                <p>Emissão Nota: {{ os.data_emissao_nota.strftime('%d/%m/%Y %H:%M') if os.data_emissao_nota }}</p>
+                <p>Entrega: {{ os.data_entrega.strftime('%d/%m/%Y %H:%M') if os.data_entrega }}</p>
+                <p><strong>Dias para entrega:</strong> {{ os.dias_para_entrega or '-' }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="card shadow-sm mt-3">
+    <div class="card-header bg-dark text-white">Ações</div>
+    <div class="card-body d-flex gap-2 flex-wrap">
+        {% if os.status == 'AGUARDANDO_ORCAMENTO' %}
+        <a href="/os/{{ os.id }}/orcamento" class="btn btn-warning"><i class="bi bi-file-earmark-plus"></i> Elaborar Orçamento</a>
+        {% elif os.status == 'ORCAMENTO_ENVIADO' %}
+        <form method="POST" action="/os/{{ os.id }}/aprovar"><button class="btn btn-success"><i class="bi bi-check-circle"></i> Aprovar Orçamento</button></form>
+        <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#recusarModal"><i class="bi bi-x-circle"></i> Recusar</button>
+        {% elif os.status == 'APROVADO' %}
+        <form method="POST" action="/os/{{ os.id }}/execucao/iniciar"><button class="btn btn-primary"><i class="bi bi-wrench"></i> Iniciar Execução</button></form>
+        {% elif os.status == 'EM_EXECUCAO' %}
+        <form method="POST" action="/os/{{ os.id }}/execucao/finalizar"><button class="btn btn-info text-white"><i class="bi bi-check2-square"></i> Finalizar Trabalho</button></form>
+        {% elif os.status == 'AGUARDANDO_NOTA' or os.status == 'AGUARDANDO_ENTREGA' %}
+        <a href="/os/{{ os.id }}/nota" class="btn btn-dark"><i class="bi bi-receipt"></i> Emitir Nota Simulada</a>
+        {% elif os.status == 'AGUARDANDO_ENTREGA' and os.nota %}
+        <form method="POST" action="/os/{{ os.id }}/entrega"><button class="btn btn-success"><i class="bi bi-truck"></i> Entregar Veículo</button></form>
+        {% endif %}
+        <a href="/os" class="btn btn-secondary">Voltar</a>
+    </div>
+</div>
+<div class="modal fade" id="recusarModal">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="/os/{{ os.id }}/recusar">
+                <div class="modal-header"><h5 class="modal-title">Recusar Orçamento</h5></div>
+                <div class="modal-body"><input type="text" name="motivo" class="form-control" placeholder="Motivo"></div>
+                <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-danger">Recusar</button></div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-file-earmark-text"></i> Ordens de Serviço</h2>
+    <a href="/os/nova" class="btn btn-dark"><i class="bi bi-plus-circle"></i> Abrir OS</a>
+</div>
+<div class="mb-3">
+    <a href="/os" class="btn btn-outline-dark btn-sm">Todas</a>
+    <a href="/os?status=AGUARDANDO_ORCAMENTO" class="btn btn-outline-secondary btn-sm">Aguardando Orçamento</a>
+    <a href="/os?status=ORCAMENTO_ENVIADO" class="btn btn-outline-warning btn-sm">Orçamento Enviado</a>
+    <a href="/os?status=APROVADO" class="btn btn-outline-info btn-sm">Aprovado</a>
+    <a href="/os?status=EM_EXECUCAO" class="btn btn-outline-primary btn-sm">Em Execução</a>
+    <a href="/os?status=AGUARDANDO_NOTA" class="btn btn-outline-dark btn-sm">Aguardando Nota</a>
+    <a href="/os?status=ENTREGUE" class="btn btn-outline-success btn-sm">Entregue</a>
+</div>
+<table class="table table-striped bg-white shadow-sm">
+    <thead class="table-dark">
+        <tr><th>OS</th><th>Cliente</th><th>Veículo</th><th>Placa</th><th>Status</th><th>Entrada</th><th>Valor</th><th>Dias</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for o in ordens %}
+        <tr>
+            <td><strong>{{ o.numero_os }}</strong></td>
+            <td>{{ o.cliente.nome }}</td>
+            <td>{{ o.veiculo_marca }} {{ o.veiculo_modelo }}</td>
+            <td>{{ o.placa }}</td>
+            <td><span class="badge bg-secondary">{{ o.status }}</span></td>
+            <td>{{ o.data_entrada.strftime('%d/%m/%Y') if o.data_entrada }}</td>
+            <td>R$ {{ "%.2f"|format(o.valor_final or o.valor_orcamento or 0) }}</td>
+            <td>{{ o.dias_para_entrega or '-' }}</td>
+            <td><a href="/os/{{ o.id }}" class="btn btn-sm btn-outline-dark">Detalhes</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

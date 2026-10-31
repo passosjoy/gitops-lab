@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: app-canary-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: minha-aplicacao
+  template:
+    metadata:
+      labels:
+        app: minha-aplicacao
+    spec:
+      containers:
+      - name: web
+        image: minha-imagem:v1.0.0
+        ports:
+        - containerPort: 8080
+  strategy:
+    canary:
+      trafficRouting:
+        istio:
+          virtualService:
+            name: app-virtualservice
+            routes:
+            - primary
+      steps:
+      - setWeight: 10
+      - pause: { duration: 5m }
+      - setWeight: 50
+      - pause: { duration: 5m }

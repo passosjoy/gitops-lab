@@ -1,0 +1,16 @@
+name: GitOps Rollout Callback
+
+on:
+  repository_dispatch:
+    types: [rollout-completed, rollout-aborted]
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    env:
+      SHA: ${{ github.event.client_payload.sha }}
+      EVENT: ${{ github.event.action }}
+    steps:
+    - name: Notificar Status do Rollout
+      run: |
+        echo "Recebido evento de rollout: $EVENT para o commit $SHA"

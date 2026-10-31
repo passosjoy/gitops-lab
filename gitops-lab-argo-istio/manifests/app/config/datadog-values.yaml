@@ -1,0 +1,86 @@
+# ALTERNATIVA ao Datadog Operator: instalação via Helm chart oficial.
+#
+#   kubectl create namespace datadog --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl -n datadog create secret generic datadog-secret \
+#     --from-literal=api-key="$DD_API_KEY" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#   helm repo add datadog https://helm.datadoghq.com
+#   helm upgrade --install datadog datadog/datadog -n datadog \
+#     --values app/config/datadog-values.yaml
+#
+# Use OU Operator OU Helm — não os dois no mesmo cluster.
+# OpenTelemetry Collector não é necessário neste laboratório.
+
+datadog:
+  apiKeyExistingSecret: datadog-secret
+  site: datadoghq.com
+  clusterName: sre-observability-lab
+
+  tags:
+    - "env:lab"
+    - "project:observability-lab"
+    - "owner:devops"
+
+  kubelet:
+    tlsVerify: false
+
+  # APM: recebe traces do ddtrace via hostPort 8126 e socket Unix.
+  apm:
+    portEnabled: true
+    socketEnabled: true
+
+  # Logs de todos os containers (inclui a app oficina-lanternagem-do-rasta).
+  logs:
+    enabled: true
+    containerCollectAll: true
+
+  # Processos, orquestração e métricas de estado do Kubernetes.
+  processAgent:
+    enabled: true
+  orchestratorExplorer:
+    enabled: true
+  kubeStateMetricsCore:
+    enabled: true
+
+  # Coleta de eventos do Kubernetes.
+  eventCollection:
+    collectKubernetesEvents: true
+
+  # DogStatsD via hostPort (SLIs customizados da aplicação).
+  dogstatsd:
+    port: 8125
+    useHostPort: true
+    nonLocalTraffic: true
+    originDetection: true
+
+  # Não usamos OTel Collector nem Prometheus scraping neste laboratório.
+  otelCollector:
+    enabled: false
+  prometheusScrape:
+    enabled: false
+
+clusterAgent:
+  enabled: true
+  createPodDisruptionBudget: true
+  replicas: 1
+  # Provider de métricas do Datadog para HPAs com métricas customizadas.
+  metricsProvider:
+    enabled: true
+    useDatadogMetrics: true
+
+agents:
+  # Roda em todos os nós (DaemonSet) e suporta control-plane taints.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"

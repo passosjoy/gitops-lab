@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-receipt"></i> Emitir Nota de Serviço (Simulada)</h2>
+<div class="card shadow-sm">
+    <div class="card-body">
+        <p><strong>OS:</strong> {{ os.numero_os }} | <strong>Cliente:</strong> {{ os.cliente.nome }}</p>
+        <p><strong>Valor Total:</strong> R$ {{ "%.2f"|format(valor) }}</p>
+        <form method="POST">
+            <button class="btn btn-dark"><i class="bi bi-check-circle"></i> Emitir Nota NS-XXXXXX</button>
+            <a href="/os/{{ os.id }}" class="btn btn-secondary">Cancelar</a>
+        </form>
+        <small class="text-muted d-block mt-2">Esta é uma emissão simulada para fins de observabilidade.</small>
+    </div>
+</div>
+{% endblock %}

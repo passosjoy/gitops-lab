@@ -1,0 +1,82 @@
+# Datadog Agent via Datadog Operator (recurso DatadogAgent v2alpha1).
+#
+# Pré-requisitos:
+#   kubectl create namespace datadog --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl -n datadog create secret generic datadog-secret \
+#     --from-literal=api-key="$DD_API_KEY" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#   helm repo add datadog https://helm.datadoghq.com
+#   helm upgrade --install datadog-operator datadog/datadog-operator -n datadog
+#   kubectl apply -f app/config/datadog-agent.yaml
+#
+# Este laboratório usa APM nativo do Datadog (ddtrace). O OpenTelemetry
+# Collector NÃO é necessário e por isso não é habilitado.
+apiVersion: datadoghq.com/v2alpha1
+kind: DatadogAgent
+metadata:
+  name: datadog
+  namespace: datadog
+spec:
+  global:
+    clusterName: sre-observability-lab
+    site: datadoghq.com
+    credentials:
+      apiSecret:
+        secretName: datadog-secret
+        keyName: api-key
+    tags:
+      - "env:lab"
+      - "project:observability-lab"
+      - "owner:devops"
+    # EKS usa certificado autoassinado no kubelet.
+    kubelet:
+      tlsVerify: false
+  features:
+    apm:
+      enabled: true
+      hostPortConfig:
+        enabled: true
+        hostPort: 8126
+      unixDomainSocketConfig:
+        enabled: true
+        path: /var/run/datadog/apm.socket
+    dogstatsd:
+      hostPortConfig:
+        enabled: true
+        hostPort: 8125
+      nonLocalTraffic: true
+      originDetectionEnabled: true
+    logCollection:
+      enabled: true
+      containerCollectAll: true
+      containerCollectUsingFiles: true
+    liveContainerCollection:
+      enabled: true
+    orchestratorExplorer:
+      enabled: true
+    processDiscovery:
+      enabled: true
+    kubeStateMetricsCore:
+      enabled: true
+    clusterChecks:
+      enabled: true
+    eventCollection:
+      collectKubernetesEvents: true
+    prometheusScrape:
+      enabled: false
+  override:
+    nodeAgent:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-file-earmark-plus"></i> Elaborar Orçamento - OS {{ os.numero_os }}</h2>
+<div class="card shadow-sm">
+    <div class="card-body">
+        <form method="POST">
+            <table class="table">
+                <thead>
+                    <tr><th>Descrição</th><th>Tipo</th><th>Quantidade</th><th>Valor Unitário (R$)</th></tr>
+                </thead>
+                <tbody id="itens">
+                    <tr>
+                        <td><input type="text" name="descricao[]" class="form-control" required></td>
+                        <td><select name="tipo[]" class="form-select"><option value="PECA">Peça</option><option value="MAO_DE_OBRA">Mão de Obra</option></select></td>
+                        <td><input type="number" name="quantidade[]" class="form-control" value="1" min="1"></td>
+                        <td><input type="number" step="0.01" name="valor_unitario[]" class="form-control" required></td>
+                    </tr>
+                </tbody>
+            </table>
+            <button type="button" class="btn btn-outline-dark btn-sm" onclick="addItem()"><i class="bi bi-plus"></i> Adicionar Item</button>
+            <div class="mt-3">
+                <button class="btn btn-warning"><i class="bi bi-send"></i> Enviar Orçamento</button>
+                <a href="/os/{{ os.id }}" class="btn btn-secondary">Cancelar</a>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+function addItem(){
+    const tbody = document.getElementById('itens');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input type="text" name="descricao[]" class="form-control" required></td><td><select name="tipo[]" class="form-select"><option value="PECA">Peça</option><option value="MAO_DE_OBRA">Mão de Obra</option></select></td><td><input type="number" name="quantidade[]" class="form-control" value="1" min="1"></td><td><input type="number" step="0.01" name="valor_unitario[]" class="form-control" required></td>`;
+    tbody.appendChild(tr);
+}
+</script>
+{% endblock %}

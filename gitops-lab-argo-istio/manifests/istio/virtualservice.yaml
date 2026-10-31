@@ -1,0 +1,17 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: app-virtualservice
+spec:
+  hosts:
+  - "minha-app.local"
+  gateways:
+  - mesh
+  http:
+  - route:
+    - destination:
+        host: app-canary-service-primary
+      weight: 100
+    - destination:
+        host: app-canary-service-canary
+      weight: 0
