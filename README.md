@@ -351,7 +351,9 @@ gitops/
 │       ├── disallow-privileged.yaml
 │       ├── require-labels.yaml
 │       └── require-resources.yaml
+└── termos.md                          # Termos e conceitos importantes
 └── README.md                          # Este arquivo
+
 ```
 
 > A aplicação em `manifests/app/src/` expõe métricas em `/metrics` e envia traces via OTLP. Os manifestos base (Deployment/Service/ConfigMap da aplicação) podem ser adicionados em `manifests/app/`; o `Rollout` é quem **gerencia as revisões** e o tráfego.
