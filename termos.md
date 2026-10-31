@@ -256,14 +256,14 @@ jobs:
 ### Fluxo completo com esse workflow
 | Etapa	| Responsável |Ação |
 |---|---|---|
-| Build/Push | GitHub Actions | Builda a aplicação, gera uma imagem imutável com o SHA do commit e faz push para o Container Registry. |
-| Update Manifest | GitHub Actions | Atualiza a imagem no Rollout e commita essa alteração de volta no repositório Git. |
-| GitOps Sync | Argo CD | Detecta o novo commit e sincroniza o estado desejado com o cluster. |
-| Progressive Delivery | Argo Rollouts | Executa canary ou blue/green, com validação automática via AnalysisTemplate (Prometheus). |
-| Callback + DORA Metrics | Argo Rollouts Notifications + retorno.yml | Ao finalizar (Healthy ou Degraded), dispara o repository_dispatch. O retorno.yml calcula o Lead Time for Changes (commit da alteração → rollout Healthy) e publica no Pushgateway para visualização no Grafana. |
+| **Build/Push** | GitHub Actions | Builda a aplicação, gera uma imagem imutável com o *SHA* do commit e faz push para o *Container Registry.* |
+| **Update Manifest** | GitHub Actions | Atualiza a imagem no *Rollout* e commita essa alteração de volta no repositório Git. |
+| **GitOps Sync** | Argo CD | Detecta o novo commit e sincroniza o estado desejado com o cluster. |
+| **Progressive Delivery** | Argo Rollouts | Executa *canary* ou *blue/green*, com validação automática via `AnalysisTemplate` (*Prometheus*). |
+| **Callback + DORA Metrics** | *Argo Rollouts Notifications* + `retorno.yml` | Ao finalizar (*Healthy* ou *Degraded*), dispara o *repository_dispatch*. O `retorno.yml` calcula o *Lead Time for Changes* (commit da alteração → *rollout Healthy*) e publica no *Pushgateway* para visualização no *Grafana*. |
 
 Resumindo
-- Em cenário real: Falta a etapa build + push + update do manifesto. É ela que fecha o ciclo de CI dentro do modelo GitOps.
-- O retorno.yml não é um workflow de deploy: Ele é um rollout callback, responsável por fechar o loop entre Argo Rollouts e GitHub para notificações e cálculo das DORA Metrics.
-- O "deploy" aqui é GitOps: A mudança acontece via commit no Git, e não via kubectl apply disparado pelo GitHub Actions.
-- Sobre rollback: Em GitOps, a forma auditável e recomendada é fazer git revert do commit que alterou a imagem/manifests. Já o kubectl argo rollouts abort é perfeito para frear o rollout imediatamente durante o canary, mas não substitui um rollback versionado via Git.
+- **Em cenário real:** Falta a etapa `build + push + update do manifesto`. É ela que fecha o ciclo de CI dentro do modelo *GitOps*.
+- **O `retorno.yml` não é um workflow de deploy**: Ele é um rollout callback, responsável por fechar o loop entre *Argo Rollouts* e *GitHub* para notificações e cálculo das *DORA Metrics*.
+- **O "deploy" aqui é GitOps:** A mudança acontece via commit no Git, e não via kubectl apply disparado pelo *GitHub Actions*.
+- **Sobre rollback:** Em *GitOps*, a forma auditável e recomendada é fazer git revert do commit que alterou a imagem/manifests. Já o `kubectl argo rollouts abort` é perfeito para frear o *rollout* imediatamente durante o *canary*, mas não substitui um *rollback* versionado via Git.
