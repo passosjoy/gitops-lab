@@ -29,7 +29,7 @@ jobs:
           docker run --rm \
             -v "$PWD:/workspace" \
             -w /workspace \
-            ghcr.io/kyverno/kyverno-cli:latest \
+            ghcr.io/kyverno/kyverno-cli:release-1.20 \
             apply policy/kyverno \
             --resource gitops-lab-argo-istio/manifests
 
