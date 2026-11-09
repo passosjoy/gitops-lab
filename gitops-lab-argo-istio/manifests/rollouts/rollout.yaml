@@ -4,7 +4,7 @@ metadata:
   name: app-canary-service
   namespace: gitops-lab
   labels:
-    app: minha-aplicacao
+    app: oficina-lanternagem
     env: lab
     owner: devops
   annotations:
@@ -12,54 +12,54 @@ metadata:
     notifications.argoproj.io/subscribe.on-rollout-aborted-slack.slack: sre-rollouts
     notifications.argoproj.io/subscribe.on-rollout-completed-github.github: dora
     notifications.argoproj.io/subscribe.on-rollout-aborted-github.github: dora
-    # Preenchido pelo CI/Kustomize para o workflow calcular o Lead Time.
+    # Preenchido pelo pipeline de deploy para cálculo de Lead Time (DORA).
     # github-sha: "0000000000000000000000000000000000000000"
 spec:
-  replicas: 3
-  revisionHistoryLimit: 5
+  replicas: 2
+  revisionHistoryLimit: 3
   progressDeadlineSeconds: 600
   selector:
     matchLabels:
-      app: minha-aplicacao
+      app: oficina-lanternagem
   template:
     metadata:
       labels:
-        app: minha-aplicacao
+        app: oficina-lanternagem
         env: lab
         owner: devops
       annotations:
         sidecar.istio.io/inject: "true"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: web
-          image: minha-imagem:v1.0.0
+          # Atualizado pelo pipeline .github/workflows/deploy-oci.yml (ou build-and-push + GitOps).
+          image: ghcr.io/SEU-USUARIO/SEU-REPO/app:latest
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret
           env:
-            - name: OTEL_SERVICE_NAME
-              value: oficina-lanternagem-do-rasta
-            - name: APP_ENV
-              value: lab
             - name: APP_VERSION
-              value: v1.0.0
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.observability.svc.cluster.local:4318
-            - name: PROMETHEUS_MULTIPROC_DIR
-              value: /tmp/prometheus-multiproc
-            # O restante do ambiente (DB_*, FLASK_SECRET_KEY, etc.) deve vir de
-            # ConfigMap/Secret da aplicação.
+              value: "latest"
           readinessProbe:
             httpGet:
               path: /ready
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 15
+            initialDelaySeconds: 20
             periodSeconds: 10
           securityContext:
             privileged: false
@@ -76,6 +76,8 @@ spec:
               memory: 512Mi
   strategy:
     canary:
+      canaryService: app-canary-service-canary
+      stableService: app-canary-service-stable
       trafficRouting:
         istio:
           virtualService:
@@ -92,8 +94,8 @@ spec:
       steps:
         - setWeight: 10
         - pause:
-            duration: 5m
+            duration: 2m
         - setWeight: 50
         - pause:
-            duration: 5m
+            duration: 2m
         - setWeight: 100

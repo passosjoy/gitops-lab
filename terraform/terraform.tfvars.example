@@ -1,0 +1,52 @@
+# Copie para terraform.tfvars e preencha. NÃO commite o tfvars.
+region                  = "sa-saopaulo-1"
+config_profile          = "DEFAULT"
+tenancy_ocid            = "ocid1.tenancy.oc1..xxxxx"
+parent_compartment_ocid = "ocid1.tenancy.oc1..xxxxx" # geralmente a própria tenancy
+
+project_name = "gitops-lab"
+environment  = "lab"
+owner        = "seu-nome"
+cost_center  = "estudos"
+
+vcn_cidr           = "10.0.0.0/16"
+public_subnet_cidr = "10.0.1.0/24"
+app_subnet_cidr    = "10.0.2.0/24"
+db_subnet_cidr     = "10.0.3.0/24"
+
+# Restringir ao seu IP/32 (recomendado). Para GitHub Actions SSH dinâmico, avalie self-hosted runner ou OCI DevOps.
+admin_cidr       = "203.0.113.10/32"
+allowed_ssh_cidr = "203.0.113.10/32" # usado pelo Bastion quando aplicável
+
+ssh_public_key = "ssh-ed25519 AAAA... seu-email@exemplo"
+
+# A aplicação usa PostgreSQL (psycopg). ADB (Oracle) fica desativado por padrão.
+create_adb         = false
+# adb_admin_password = "TroqueEstaSenha#2026"
+# adb_db_name        = "LABADB"
+# adb_is_free_tier   = true
+
+# OCI Always Free: VM.Standard.A1.Flex — 4 OCPU e 24 GB RAM (total da tenancy).
+compute_shape      = "VM.Standard.A1.Flex"
+compute_ocpus      = 4
+compute_memory_gbs = 24
+assign_public_ip   = true
+bootstrap_k3s      = true
+app_http_port      = 80
+
+create_iam       = true
+create_compute   = true
+create_bastion   = true
+enable_flow_logs = true
+
+# OKE (trial: 4.500h compute / 500 GB OCIR). A1.Flex onde disponível.
+create_oke              = false
+# oke_kubernetes_version  = null # null = versão suportada mais recente na região
+oke_node_shape          = "VM.Standard.A1.Flex"
+oke_node_ocpus          = 2
+oke_node_memory_gbs     = 12
+oke_node_count          = 2
+# oke_node_image_id       = null
+
+budget_amount      = 100
+budget_alert_email = "seu-email@exemplo.com"

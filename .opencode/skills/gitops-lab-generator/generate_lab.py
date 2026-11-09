@@ -34,12 +34,12 @@ spec:
   revisionHistoryLimit: 5
   selector:
     matchLabels:
-      app: minha-aplicacao
+      app: oficina-lanternagem
       track: canary
   template:
     metadata:
       labels:
-        app: minha-aplicacao
+        app: oficina-lanternagem
         track: canary
       annotations:
         sidecar.istio.io/inject: "true"
@@ -47,7 +47,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: ghcr.io/seu-org/minha-aplicacao:v1.0.0
+          image: ghcr.io/seu-org/oficina-lanternagem:v1.0.0
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -83,7 +83,7 @@ spec:
         startingStep: 1
         args:
           - name: service-name
-            value: minha-aplicacao
+            value: oficina-lanternagem
       steps:
         - setWeight: 5
         - pause: { duration: 2m }
@@ -119,17 +119,17 @@ spec:
   revisionHistoryLimit: 3
   selector:
     matchLabels:
-      app: minha-aplicacao-bg
+      app: oficina-lanternagem-bg
   template:
     metadata:
       labels:
-        app: minha-aplicacao-bg
+        app: oficina-lanternagem-bg
       annotations:
         sidecar.istio.io/inject: "true"
     spec:
       containers:
         - name: web
-          image: ghcr.io/seu-org/minha-aplicacao:v1.0.0
+          image: ghcr.io/seu-org/oficina-lanternagem:v1.0.0
           ports:
             - containerPort: 8080
           resources:
@@ -150,13 +150,13 @@ spec:
           - templateName: app-success-rate
         args:
           - name: service-name
-            value: minha-aplicacao-bg
+            value: oficina-lanternagem-bg
       postPromotionAnalysis:
         templates:
           - templateName: app-success-rate
         args:
           - name: service-name
-            value: minha-aplicacao-bg
+            value: oficina-lanternagem-bg
 """
 
     with open(f"{nome_lab}/manifests/rollouts/bluegreen/rollout-bluegreen.yaml", "w") as f:
@@ -195,11 +195,11 @@ spec:
   subsets:
     - name: stable
       labels:
-        app: minha-aplicacao
+        app: oficina-lanternagem
         rollouts-pod-template-hash: stable
     - name: canary
       labels:
-        app: minha-aplicacao
+        app: oficina-lanternagem
         rollouts-pod-template-hash: canary
 """
 

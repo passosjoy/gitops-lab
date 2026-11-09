@@ -1,0 +1,101 @@
+name: "CI/CD Sequencial (Policy → Build → Infra → App)"
+
+# Pipeline sequencial principal do lab.
+# - 01/policy-check: gate de Policy as Code (Kyverno/OPA)
+# - 02/build-and-push: build/push da imagem no GHCR
+# - 03/deploy-infra: Terraform OCI (plan/apply) — infra antes da aplicação quando aplicável
+# - 04/deploy-app: deploy da aplicação na VM OCI (compose) ou via SSH/kubectl
+#
+# "retorno.yml" NÃO entra nesta sequência: é um callback assíncrono disparado pelo
+# Argo Rollouts (repository_dispatch) quando o rollout completa/aborta no cluster,
+# usado para DORA Lead Time (Pushgateway) e fallback de notificação.
+
+on:
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: "Terraform: plan ou apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      deploy_app:
+        description: "Executar deploy da aplicação após infra"
+        required: true
+        default: false
+        type: boolean
+      deploy_mode:
+        description: "Modo deploy app"
+        required: true
+        default: compose
+        type: choice
+        options: [compose, k8s]
+      image_tag:
+        description: "Tag da imagem (vazio = SHA)"
+        required: false
+        type: string
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  policy:
+    name: 01 - Policy Check
+    uses: ./.github/workflows/policy-check.yaml
+
+  build:
+    name: 02 - Build & Push
+    needs: [policy]
+    uses: ./.github/workflows/build-and-push.yml
+    with:
+      push_image: true
+    secrets: inherit
+
+  infra:
+    name: 03 - Deploy Infra
+    needs: [build]
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/deploy-infra.yml
+    with:
+      terraform_action: ${{ inputs.terraform_action }}
+    secrets: inherit
+
+  app:
+    name: 04 - Deploy App
+    needs: [build, infra]
+    # Em push: não faz deploy automático (evita SSH/credenciais em todo commit).
+    # Em dispatch: deploya se solicitado; se infra não rodou (skip por condição), needs
+    # ainda exige conclusão? 'infra' pode ser skipped — usamos always() + checks.
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.infra.result == 'success' || needs.infra.result == 'skipped') &&
+      (github.event_name == 'workflow_dispatch' && inputs.deploy_app == true)
+    uses: ./.github/workflows/deploy-oci.yml
+    with:
+      image_tag: ${{ inputs.image_tag || github.sha }}
+      deploy_mode: ${{ inputs.deploy_mode }}
+    secrets: inherit
+
+  summary:
+    name: Resumo sequencial
+    needs: [policy, build, infra, app]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Status
+        shell: bash
+        run: |
+          echo "## CI/CD Sequencial" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Etapa | Resultado |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 01 Policy Check | \`${{ needs.policy.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 02 Build & Push | \`${{ needs.build.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 03 Deploy Infra | \`${{ needs.infra.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 04 Deploy App | \`${{ needs.app.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **retorno.yml** (callback Argo Rollouts/DORA) é assíncrono e não faz parte desta sequência." >> "$GITHUB_STEP_SUMMARY"
+          echo "> Deploy real exige Secrets/Variables configurados no GitHub (veja \`docs/github-actions-config.md\`)." >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,163 @@
+name: "03 - Deploy Infra (Terraform OCI)"
+
+on:
+  workflow_call:
+    inputs:
+      terraform_action:
+        description: "plan ou apply"
+        type: string
+        required: false
+        default: plan
+      working_directory:
+        type: string
+        required: false
+        default: terraform
+    secrets:
+      OCI_TENANCY_OCID:
+        required: false
+      OCI_USER_OCID:
+        required: false
+      OCI_FINGERPRINT:
+        required: false
+      OCI_PRIVATE_KEY:
+        required: false
+      OCI_REGION:
+        required: false
+      TF_VAR_PARENT_COMPARTMENT_OCID:
+        required: false
+      TF_VAR_SSH_PUBLIC_KEY:
+        required: false
+      TF_VAR_ADMIN_CIDR:
+        required: false
+      TF_VAR_BUDGET_ALERT_EMAIL:
+        required: false
+      TF_VAR_ADB_ADMIN_PASSWORD:
+        required: false
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: "Ação Terraform (apply requer aprovação no Environment 'oci-infra')"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-oci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: Terraform ${{ inputs.terraform_action || github.event.inputs.terraform_action || 'plan' }}
+    runs-on: ubuntu-latest
+    environment: ${{ (inputs.terraform_action || github.event.inputs.terraform_action) == 'apply' && 'oci-infra' || '' }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory || 'terraform' }}
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ACTION: ${{ inputs.terraform_action || github.event.inputs.terraform_action || 'plan' }}
+      # OCI auth (API Key) — configure em Settings > Secrets and variables > Actions
+      TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+      TF_VAR_region: ${{ secrets.OCI_REGION || vars.OCI_REGION || 'sa-saopaulo-1' }}
+      TF_VAR_config_file_profile: DEFAULT
+      TF_VAR_parent_compartment_ocid: ${{ secrets.TF_VAR_PARENT_COMPARTMENT_OCID || secrets.OCI_TENANCY_OCID }}
+      TF_VAR_ssh_public_key: ${{ secrets.TF_VAR_SSH_PUBLIC_KEY || vars.TF_VAR_SSH_PUBLIC_KEY }}
+      TF_VAR_admin_cidr: ${{ secrets.TF_VAR_ADMIN_CIDR || vars.TF_VAR_ADMIN_CIDR || '0.0.0.0/0' }}
+      TF_VAR_budget_alert_email: ${{ secrets.TF_VAR_BUDGET_ALERT_EMAIL || vars.TF_VAR_BUDGET_ALERT_EMAIL || 'noreply@example.invalid' }}
+      TF_VAR_adb_admin_password: ${{ secrets.TF_VAR_ADB_ADMIN_PASSWORD }}
+      # Opcionais (defina como vars/secrets se precisar sobrescrever defaults do Terraform)
+      TF_VAR_create_adb: ${{ vars.TF_VAR_CREATE_ADB || 'false' }}
+      TF_VAR_create_compute: ${{ vars.TF_VAR_CREATE_COMPUTE || 'true' }}
+      TF_VAR_create_oke: ${{ vars.TF_VAR_CREATE_OKE || 'false' }}
+      TF_VAR_bootstrap_k3s: ${{ vars.TF_VAR_BOOTSTRAP_K3S || 'true' }}
+      TF_VAR_assign_public_ip: ${{ vars.TF_VAR_ASSIGN_PUBLIC_IP || 'true' }}
+      TF_VAR_compute_shape: ${{ vars.TF_VAR_COMPUTE_SHAPE || 'VM.Standard.A1.Flex' }}
+      TF_VAR_compute_ocpus: ${{ vars.TF_VAR_COMPUTE_OCPUS || '4' }}
+      TF_VAR_compute_memory_gbs: ${{ vars.TF_VAR_COMPUTE_MEMORY_GBS || '24' }}
+      TF_VAR_oke_node_shape: ${{ vars.TF_VAR_OKE_NODE_SHAPE || 'VM.Standard.A1.Flex' }}
+      TF_VAR_oke_node_ocpus: ${{ vars.TF_VAR_OKE_NODE_OCPUS || '2' }}
+      TF_VAR_oke_node_memory_gbs: ${{ vars.TF_VAR_OKE_NODE_MEMORY_GBS || '12' }}
+      TF_VAR_oke_node_count: ${{ vars.TF_VAR_OKE_NODE_COUNT || '2' }}
+      TF_VAR_oke_kubernetes_version: ${{ vars.TF_VAR_OKE_KUBERNETES_VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Verificar credenciais OCI
+        id: creds
+        shell: bash
+        working-directory: .
+        run: |
+          if [ -n "${{ secrets.OCI_TENANCY_OCID }}" ] && [ -n "${{ secrets.OCI_USER_OCID }}" ] && [ -n "${{ secrets.OCI_FINGERPRINT }}" ] && [ -n "${{ secrets.OCI_PRIVATE_KEY }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Credenciais OCI ausentes: deploy real de infra PULADO (fmt/init/validate ainda executam)."
+          fi
+
+      - name: Configurar OCI (~/.oci/config)
+        if: steps.creds.outputs.available == 'true'
+        shell: bash
+        working-directory: .
+        run: |
+          mkdir -p ~/.oci
+          umask 077
+          printf '%s\n' "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION || vars.OCI_REGION || 'sa-saopaulo-1' }}
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        if: steps.creds.outputs.available == 'true'
+        run: terraform plan -no-color -input=false -out=tfplan
+
+      - name: Terraform apply
+        if: steps.creds.outputs.available == 'true' && env.ACTION == 'apply'
+        run: terraform apply -no-color -input=false -auto-approve tfplan
+
+      - name: Terraform output (best effort)
+        if: steps.creds.outputs.available == 'true' && env.ACTION == 'apply'
+        id: tfout
+        continue-on-error: true
+        run: |
+          terraform output -json > /tmp/tf-outputs.json || true
+          echo "outputs_file=/tmp/tf-outputs.json" >> "$GITHUB_OUTPUT"
+
+      - name: Resumo
+        if: always()
+        shell: bash
+        working-directory: .
+        run: |
+          echo "## 03 - Deploy Infra (Terraform OCI)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Ação: \`${ACTION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Credenciais OCI: \`${{ steps.creds.outputs.available }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- create_oke: \`${{ vars.TF_VAR_CREATE_OKE || 'false' }}\` | create_compute: \`${{ vars.TF_VAR_CREATE_COMPUTE || 'true' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.creds.outputs.available }}" != "true" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> **Deploy real não executado.** Configure Secrets/Variables no GitHub (veja \`docs/github-actions-config.md\` / \`terraform/README.md\`)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${ACTION}" = "apply" ] && [ "${{ steps.creds.outputs.available }}" = "true" ]; then
+            echo "- Após apply, copie \`compute_public_ip\`/\`oke_kubeconfig_hint\` para os secrets/variáveis de deploy da aplicação." >> "$GITHUB_STEP_SUMMARY"
+          fi

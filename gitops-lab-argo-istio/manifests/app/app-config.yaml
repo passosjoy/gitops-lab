@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: gitops-lab
+  labels:
+    app: oficina-lanternagem
+    env: lab
+    owner: devops
+data:
+  APP_ENV: "lab"
+  OTEL_SERVICE_NAME: "oficina-lanternagem-do-rasta"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4318"
+  PROMETHEUS_MULTIPROC_DIR: "/tmp/prometheus-multiproc"
+  DB_HOST: "postgres.gitops-lab.svc.cluster.local"
+  DB_PORT: "5432"

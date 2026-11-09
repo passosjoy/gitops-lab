@@ -1,0 +1,59 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - git
+  - curl
+  - jq
+  - firewalld
+
+write_files:
+  - path: /opt/gitops-lab/bootstrap.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      exec > >(tee -a /var/log/gitops-bootstrap.log) 2>&1
+      echo "[bootstrap] $(date -Is) starting"
+
+      systemctl enable --now firewalld || true
+      for p in 22 80 443 ${app_http_port} 5000 6443 30000-32767; do
+        firewall-cmd --permanent --add-port="$${p}/tcp" || true
+      done
+      firewall-cmd --reload || true
+
+      # Docker (para deploy por container/pipeline)
+      if ! command -v docker >/dev/null 2>&1; then
+        dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo || true
+        dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || \
+          dnf install -y podman podman-docker docker-compose-plugin || true
+      fi
+      systemctl enable --now docker || true
+      usermod -aG docker opc || true
+
+      mkdir -p /opt/gitops-lab/deploy /opt/gitops-lab/manifests
+      chown -R opc:opc /opt/gitops-lab
+
+%{ if bootstrap_k3s ~}
+      # k3s single-node (Always Free 4 OCPU / 24 GB) — stack GitOps completa
+      if ! command -v k3s >/dev/null 2>&1; then
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --disable traefik" sh -
+      fi
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      mkdir -p /home/opc/.kube
+      cp /etc/rancher/k3s/k3s.yaml /home/opc/.kube/config
+      chown -R opc:opc /home/opc/.kube
+      chmod 600 /home/opc/.kube/config
+
+      # Helm
+      if ! command -v helm >/dev/null 2>&1; then
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      fi
+%{ endif ~}
+
+      echo "[bootstrap] $(date -Is) done"
+
+runcmd:
+  - [ bash, /opt/gitops-lab/bootstrap.sh ]

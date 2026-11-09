@@ -1,4 +1,11 @@
-name: GitOps Rollout Callback
+name: "Callback (DORA) - Argo Rollouts repository_dispatch"
+
+# NECESSÁRIO (mantido): callback assíncrono disparado pelo Argo Rollouts Notifications
+# quando o rollout completa/aborta (repository_dispatch). NÃO faz parte da sequência
+# de deploy CI/CD (policy→build→infra→app), porque depende de evento em runtime no cluster.
+# Responsabilidades:
+# - calcular/publicar Lead Time for Changes no Prometheus Pushgateway (DORA)
+# - fallback de notificação Slack (complementar ao Argo Rollouts Notifications)
 
 on:
   repository_dispatch:

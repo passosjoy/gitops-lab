@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-canary-service
+  namespace: gitops-lab
+  labels:
+    app: oficina-lanternagem
+    env: lab
+    owner: devops
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5000
+  selector:
+    app: oficina-lanternagem
+---
+# Gerenciado pelo Argo Rollouts (stableService)
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-canary-service-stable
+  namespace: gitops-lab
+  labels:
+    app: oficina-lanternagem
+    env: lab
+    owner: devops
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5000
+  selector:
+    app: oficina-lanternagem
+---
+# Gerenciado pelo Argo Rollouts (canaryService)
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-canary-service-canary
+  namespace: gitops-lab
+  labels:
+    app: oficina-lanternagem
+    env: lab
+    owner: devops
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5000
+  selector:
+    app: oficina-lanternagem

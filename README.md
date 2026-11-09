@@ -39,8 +39,9 @@
 - [11. Validação, Rollback e Troubleshooting](#11-validação-rollback-e-troubleshooting)
 - [12. Checklist de Segurança (Repo + Branch + Deploy)](#12-checklist-de-segurança-repo--branch--deploy)
 - [13. Notificações, DORA Metrics e Policy as Code](#13-notificações-dora-metrics-e-policy-as-code)
-- [14. Dicas para Evoluir o Laboratório](#14-dicas-para-evoluir-o-laboratório)
-- [15. Referências](#15-referências)
+- [14. Deploy na OCI (Always Free) com Terraform e Pipelines](#14-deploy-na-oci-always-free-com-terraform-e-pipelines)
+- [15. Dicas para Evoluir o Laboratório](#15-dicas-para-evoluir-o-laboratório)
+- [16. Referências](#16-referências)
 
 ## 1. Objetivo
 
@@ -633,7 +634,7 @@ Edite `gitops-lab-argo-istio/manifests/rollouts/canary/rollout-canary.yaml`:
 ```yaml
 containers:
   - name: web
-    image: ghcr.io/seu-org/minha-aplicacao:v2.0.0  # <-- nova versão
+    image: ghcr.io/seu-org/oficina-lanternagem:v2.0.0  # <-- nova versão
 ```
 
 Commit e push:
@@ -698,7 +699,7 @@ Edite `gitops-lab-argo-istio/manifests/rollouts/bluegreen/rollout-bluegreen.yaml
 ```yaml
 containers:
   - name: web
-    image: ghcr.io/seu-org/minha-aplicacao:v2.0.0
+    image: ghcr.io/seu-org/oficina-lanternagem:v2.0.0
 ```
 
 Commit e push:
@@ -817,7 +818,88 @@ kubectl get analysisrun -n gitops-lab
 - [ ] **Histórico/versionamento** via Git (tudo auditável)
 - [ ] **Notificações integradas** com GitHub Actions para visibilidade
 
-## 13. Dicas para Evoluir o Laboratório
+## 13. Notificações, DORA Metrics e Policy as Code
+
+### 13.1 Notificações (Slack/Teams + GitHub)
+
+- **Argo Rollouts Notifications**: `gitops-lab-argo-istio/manifests/notifications/argo-rollouts-notifications.yaml` configura `service.slack` e `service.webhook.github` (tokens via Secret `argo-rollouts-notification-secret` em `argo-rollouts`, nunca no Git).
+- **Triggers**: rollout `Healthy`/`Degraded` envia mensagem ao Slack e dispara `repository_dispatch` (`rollout-completed`/`rollout-aborted`) para o GitHub.
+- **Callback CI**: `.github/workflows/retorno.yml` registra o evento e publica o *Lead Time for Changes* no Pushgateway (quando `PUSHGATEWAY_URL` e `github-sha` estão disponíveis). Teams pode ser integrado via webhook/Teams connector no mesmo padrão do Slack.
+
+Anote o SHA no Rollout (pipeline/kustomize): `metadata.annotations.github-sha: <commit>`.
+
+### 13.2 DORA Metrics (Prometheus + Grafana)
+
+| Métrica | Fonte | Implementação |
+|---|---|---|
+| **Deployment Frequency** | Argo CD | `argocd_app_sync_total{phase="Succeeded"}` |
+| **Change Failure Rate** | Argo CD | falhas/erros sobre total de syncs (24h) |
+| **Lead Time for Changes** | GitHub Actions + Pushgateway | `dora_lead_time_seconds` publicado por `retorno.yml`; Prometheus calcula p50/p90 |
+| **MTTR** | Argo Rollouts | tempo em `rollout_info{phase="Degraded"}` / incidentes (aproximação em `prometheus-rules-dora.yaml`) |
+
+- Regras: `gitops-lab-argo-istio/manifests/observability/prometheus-rules-dora.yaml`
+- Dashboard: `gitops-lab-argo-istio/manifests/observability/grafana-dashboard-dora.yaml` (Grafana sidecar)
+- Scrape de Argo CD/Rollouts/App: `gitops-lab-argo-istio/manifests/observability/scrape-configs.yaml`
+
+### 13.3 Policy as Code (Kyverno + OPA/Conftest)
+
+- **Kyverno** (`policy/kyverno/`): `disallow-latest-tag`, `require-labels`, `require-resources`, `disallow-privileged` (Rollouts no namespace `gitops-lab`).
+- **Conftest/Rego** (`policy/conftest/kubernetes.rego`): validações equivalentes via OPA.
+- **CI**: `.github/workflows/policy-check.yaml` executa `kyverno-cli` e `conftest` em PR/push nos manifests/policies.
+
+## 14. Deploy na OCI com Terraform e Pipelines (sequencial)
+
+### 14.1 Opções de execução
+
+| Opção | Quando usar | Observação |
+|---|---|---|
+| **VM OCI Always Free** (A1.Flex **4 OCPU / 24 GB**, total tenancy) | Pós-trial ou custo zero | Terraform `create_compute=true`; deploy rápido via `docker compose` (`deploy/oci/docker-compose.yml`). k3s+Istio+stack completa em nó único é possível, mas pesado. |
+| **OKE (trial/créditos)** | Stack GitOps completa (Argo CD/Rollouts/Istio/observabilidade) | Até **4.500h compute OKE** e **500 GB OCIR** no trial (conforme informado). Terraform suporta `create_oke=true` com node pool **A1.Flex onde disponível**. Monitore consumo; após trial, volte ao Always Free/ajuste. |
+| **GHCR ou OCIR** | Registry de imagem | GHCR já configurado (`ghcr.io/<owner>/<repo>/app:<sha>`). OCIR pode ser adicionado; requer secrets de OCIR no workflow de build. |
+
+### 14.2 Pipeline CI/CD sequencial (principal)
+
+Workflow: `.github/workflows/ci-cd.yml` (manual `workflow_dispatch` e `push` em `main`).
+
+Ordem **sequencial**:
+1. **01 Policy Check** — `.github/workflows/policy-check.yaml` (Kyverno CLI + Conftest/OPA). **Mantido/necessário**: gate shift-left antes de build/deploy; evita promover manifests inválidos.
+2. **02 Build & Push** — `.github/workflows/build-and-push.yml` (imagem GHCR). Depende do policy.
+3. **03 Deploy Infra** — `.github/workflows/deploy-infra.yml` (Terraform `fmt/init/validate` sempre; `plan/apply` quando credenciais OCI existem). Roda em `workflow_dispatch`; `apply` usa Environment `oci-infra` (aprovação recomendada).
+4. **04 Deploy App** — `.github/workflows/deploy-oci.yml` (SSH na VM OCI: `compose` ou `k8s` básico). Roda só quando `deploy_app=true` no dispatch e destino SSH está configurado.
+
+**`retorno.yml` (Callback DORA)** — `.github/workflows/retorno.yml` é **mantido/necessário**, mas **não entra na sequência de deploy**: é disparado por **`repository_dispatch`** do Argo Rollouts Notifications quando o rollout completa/aborta no cluster (evento assíncrono de runtime). Ele publica **Lead Time for Changes** no Pushgateway (DORA) e atua como fallback Slack. O canal principal de notificação continua sendo o Argo Rollouts Notifications.
+
+### 14.3 Configuração no GitHub (variáveis/secrets)
+
+Veja o mapeamento completo em **`docs/github-actions-config.md`**.
+
+Resumo mínimo para deploy real:
+- **Infra (Terraform OCI API key):** `OCI_TENANCY_OCID`, `OCI_USER_OCID`, `OCI_FINGERPRINT`, `OCI_PRIVATE_KEY`, `OCI_REGION`, `TF_VAR_SSH_PUBLIC_KEY`, `TF_VAR_ADMIN_CIDR`, `TF_VAR_PARENT_COMPARTMENT_OCID` (secrets/vars conforme sensibilidade).
+- **Flags (vars):** `TF_VAR_CREATE_OKE`, `TF_VAR_CREATE_COMPUTE`, `TF_VAR_COMPUTE_*`, `TF_VAR_OKE_*` etc.
+- **Deploy app (SSH):** `OCI_HOST`, `OCI_SSH_PRIVATE_KEY`, opcional `OCI_SSH_USER`, `GHCR_PULL_TOKEN`.
+- **DORA/callback:** `PUSHGATEWAY_URL` (var), `SLACK_WEBHOOK_URL` (secret).
+
+> Neste workspace não é possível configurar secrets do seu repositório GitHub nem executar deploy real contra sua tenancy OCI; os workflows foram preparados para **validar** (Terraform fmt/init/validate) e **pular com aviso** quando credenciais/destino não existem.
+
+### 14.4 Processo de deploy do laboratório (ponta a ponta)
+
+1. **Código/manifest alterado** → PR/push aciona policy/build conforme paths (ou pipeline sequencial no dispatch).
+2. **Policy Check** valida manifests com Kyverno e Conftest (OPA). Falha = bloqueia sequência.
+3. **Build & Push** gera imagem `ghcr.io/<owner>/<repo>/app:<sha>` e publica no GHCR.
+4. **Deploy Infra (Terraform)** provisiona/atualiza OCI (compartment, VCN/NSGs, VM A1 Always Free e/ou OKE com A1 flex, storage, observabilidade OCI, etc.). **Ordem lógica no pipeline:** infra após build da imagem e antes do deploy da aplicação (para haver alvo pronto quando a app é implantada). *Observação: o cluster/VM precisa existir e estar acessível; `apply` é manual/aprovado.*
+5. **Deploy App**:
+   - **Modo `compose` (VM OCI):** copia `deploy/oci/*` via SSH e executa `docker compose` com a nova imagem (app + Postgres + OTel). Caminho mais simples no Always Free.
+   - **Modo `k8s` (básico via SSH):** aplica manifests base no host com `kubectl` (ex.: k3s). **GitOps completo (recomendado com OKE/Argo CD):** a pipeline de build atualiza a tag no Git/manifest (ou Image Updater) e o **Argo CD** sincroniza; o **Argo Rollouts** faz canary/análise via Istio/Prometheus.
+6. **Progressive delivery (cluster):** Argo Rollouts promove/aborta; em sucesso/falha envia Slack e `repository_dispatch` ao GitHub.
+7. **Callback DORA:** `retorno.yml` recebe o dispatch, calcula lead time (commit → rollout concluído) e publica no Pushgateway para Prometheus/Grafana.
+
+### 14.5 “Redmine” e passos manuais
+
+- **Redmine:** não foi encontrado artefato/configuração "redmine" neste repositório (busca por `*redmine*`). Nenhuma etapa de Redmine foi removida; se a referência for a um sistema externo, ela permanece **manual/fora do repo**.
+- **Automatizado pelas pipelines (quando configuradas):** validação de policies, build/push de imagem, Terraform fmt/init/validate/plan/apply, deploy compose/SSH da app, callback DORA.
+- **Ainda manual (não removido, pois depende de credenciais/ambiente real):** configurar credenciais OCI e **Secrets/Variables no GitHub**; criar/ajustar `terraform.tfvars` local (sem commitar) se rodar Terraform fora do Actions; substituir placeholders `SEU-USUARIO/SEU-REPO`/repoURL; criar Secrets Kubernetes (`app-secret`, tokens de notificação Argo Rollouts, etc.); instalar stack completa no cluster quando usar OKE/k3s GitOps (Argo CD/Rollouts/Istio/Prometheus/Grafana/Tempo) — pode ser automatizado depois com Helm/Terraform adicional; configurar DNS/TLS/ingress externo; ajustar `admin_cidr`/acesso SSH para runners (self-hosted runner/OCI DevOps recomendado); revisão de segurança antes de produção.
+
+## 15. Dicas para Evoluir o Laboratório
 
 | Evolução | Descrição | Prioridade |
 |---|---|---|
@@ -830,7 +912,7 @@ kubectl get analysisrun -n gitops-lab
 | **Chaos Engineering** | Testar resiliência com Litmus/ChaosMesh durante Canary | Avançado |
 | **Policy as Code** | Validar manifests com OPA Conftest/Kyverno | Avançado |
 
-## 14. Referências
+## 16. Referências
 
 - [Argo CD Documentation](https://argo-cd.readthedocs.io/)
 - [Argo Rollouts Documentation](https://argo-rollouts.readthedocs.io/)

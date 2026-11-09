@@ -1,0 +1,171 @@
+name: "04 - Deploy App (OCI/Cluster)"
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        type: string
+        required: false
+      deploy_mode:
+        description: compose (VM OCI) ou k8s (k3s/OKE com acesso configurado)
+        type: string
+        required: false
+        default: compose
+    secrets:
+      OCI_HOST:
+        required: false
+      OCI_SSH_USER:
+        required: false
+      OCI_SSH_PRIVATE_KEY:
+        required: false
+      GHCR_PULL_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag da imagem (default: SHA do commit atual)"
+        required: false
+        type: string
+      deploy_mode:
+        description: "Modo de deploy"
+        required: false
+        default: "compose"
+        type: choice
+        options: [compose, k8s]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-app-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy aplicação (${{ inputs.deploy_mode || github.event.inputs.deploy_mode || 'compose' }})
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}/app
+      OCI_HOST: ${{ secrets.OCI_HOST || vars.OCI_HOST }}
+      OCI_SSH_USER: ${{ secrets.OCI_SSH_USER || vars.OCI_SSH_USER || 'opc' }}
+      DEPLOY_MODE: ${{ inputs.deploy_mode || github.event.inputs.deploy_mode || 'compose' }}
+      IMAGE_TAG_INPUT: ${{ inputs.image_tag || github.event.inputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolver imagem
+        id: image
+        shell: bash
+        run: |
+          TAG="${IMAGE_TAG_INPUT}"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_SHA}"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image=${REGISTRY}/${IMAGE_NAME}:${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Verificar destino de deploy
+        id: target
+        shell: bash
+        run: |
+          if [ -n "${OCI_HOST}" ] && [ -n "${{ secrets.OCI_SSH_PRIVATE_KEY }}" ]; then
+            echo "ssh_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ssh_available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Deploy da aplicação PULADO: configure OCI_HOST e OCI_SSH_PRIVATE_KEY (e opcionalmente OCI_SSH_USER/GHCR_PULL_TOKEN)."
+          fi
+
+      - name: Preparar chave SSH
+        if: steps.target.outputs.ssh_available == 'true'
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          umask 077
+          printf '%s\n' "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/oci_deploy
+          chmod 600 ~/.ssh/oci_deploy
+          ssh-keyscan -H "${OCI_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Copiar artefatos de deploy
+        if: steps.target.outputs.ssh_available == 'true'
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/oci_deploy -o StrictHostKeyChecking=accept-new "${OCI_SSH_USER}@${OCI_HOST}" "mkdir -p /opt/gitops-lab/deploy"
+          scp -i ~/.ssh/oci_deploy -o StrictHostKeyChecking=accept-new \
+            deploy/oci/docker-compose.yml deploy/oci/otel-collector-config.yaml deploy/oci/.env.example \
+            "${OCI_SSH_USER}@${OCI_HOST}:/opt/gitops-lab/deploy/"
+
+      - name: Deploy (docker compose)
+        if: steps.target.outputs.ssh_available == 'true' && env.DEPLOY_MODE == 'compose'
+        shell: bash
+        env:
+          APP_IMAGE: ${{ steps.image.outputs.image }}
+          GIT_SHA: ${{ steps.image.outputs.tag }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          ssh -i ~/.ssh/oci_deploy -o StrictHostKeyChecking=accept-new "${OCI_SSH_USER}@${OCI_HOST}" \
+            APP_IMAGE="${APP_IMAGE}" GIT_SHA="${GIT_SHA}" GHCR_PULL_TOKEN="${GHCR_PULL_TOKEN}" REGISTRY="${REGISTRY}" GH_ACTOR="${{ github.actor }}" \
+            'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/gitops-lab/deploy
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            sed -i "s/troque-esta-senha-forte/$(openssl rand -hex 16)/g" .env
+            sed -i "s/troque-esta-chave-flask/$(openssl rand -hex 24)/g" .env
+          fi
+          upsert() { k="$1"; v="$2"; grep -q "^${k}=" .env && sed -i "s|^${k}=.*|${k}=${v}|" .env || echo "${k}=${v}" >> .env; }
+          upsert APP_IMAGE "${APP_IMAGE}"
+          upsert APP_VERSION "${GIT_SHA}"
+          upsert GIT_SHA "${GIT_SHA}"
+          if [ -n "${GHCR_PULL_TOKEN:-}" ]; then
+            echo "${GHCR_PULL_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
+          fi
+          docker compose pull app || true
+          docker compose up -d --remove-orphans
+          docker compose ps
+          REMOTE
+
+      - name: Deploy (k8s via SSH no nó/host com kubectl)
+        if: steps.target.outputs.ssh_available == 'true' && env.DEPLOY_MODE == 'k8s'
+        shell: bash
+        env:
+          APP_IMAGE: ${{ steps.image.outputs.image }}
+          GIT_SHA: ${{ steps.image.outputs.tag }}
+        run: |
+          ssh -i ~/.ssh/oci_deploy -o StrictHostKeyChecking=accept-new "${OCI_SSH_USER}@${OCI_HOST}" "mkdir -p /opt/gitops-lab/manifests"
+          scp -i ~/.ssh/oci_deploy -o StrictHostKeyChecking=accept-new -r \
+            gitops-lab-argo-istio/manifests/namespace gitops-lab-argo-istio/manifests/app \
+            "${OCI_SSH_USER}@${OCI_HOST}:/opt/gitops-lab/manifests/"
+          ssh -i ~/.ssh/oci_deploy -o StrictHostKeyChecking=accept-new "${OCI_SSH_USER}@${OCI_HOST}" \
+            APP_IMAGE="${APP_IMAGE}" GIT_SHA="${GIT_SHA}" \
+            'bash -s' <<'REMOTE'
+          set -euo pipefail
+          export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
+          command -v kubectl >/dev/null 2>&1 || { echo "::error::kubectl não encontrado no host. Para OKE/GitOps puro, use Argo CD (sync) em vez de deploy SSH k8s."; exit 1; }
+          kubectl apply -f /opt/gitops-lab/manifests/namespace/ || true
+          kubectl apply -f /opt/gitops-lab/manifests/app/services.yaml || true
+          kubectl apply -f /opt/gitops-lab/manifests/app/app-config.yaml || true
+          kubectl apply -f /opt/gitops-lab/manifests/app/postgres.yaml || true
+          if ! kubectl -n gitops-lab get secret app-secret >/dev/null 2>&1; then
+            echo "::warning::Secret app-secret ausente (manual). Crie a partir de app-secret.example.yaml com valores reais."
+          fi
+          kubectl -n gitops-lab set image rollout/app-canary-service web="${APP_IMAGE}" 2>/dev/null || \
+            kubectl -n gitops-lab set image deploy/app-canary-service web="${APP_IMAGE}" 2>/dev/null || \
+            echo "::notice::Workload app-canary-service não encontrado. No modo GitOps completo, o Argo CD sincroniza a tag do manifest no Git."
+          kubectl -n gitops-lab annotate rollout/app-canary-service github-sha="${GIT_SHA}" --overwrite 2>/dev/null || true
+          kubectl -n gitops-lab get pods -o wide || true
+          REMOTE
+
+      - name: Resumo
+        if: always()
+        shell: bash
+        run: |
+          echo "## 04 - Deploy App" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Modo: \`${DEPLOY_MODE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Imagem: \`${{ steps.image.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Destino SSH disponível: \`${{ steps.target.outputs.ssh_available }}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.target.outputs.ssh_available }}" != "true" ]; then
+            echo "> **Deploy real não executado.** Configure \`OCI_HOST\` e \`OCI_SSH_PRIVATE_KEY\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Para **GitOps completo (OKE/Argo CD)**: prefira pipeline que atualiza a tag no manifest e deixa o Argo CD sincronizar (requer permissões de escrita/PR bot)." >> "$GITHUB_STEP_SUMMARY"

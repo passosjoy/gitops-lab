@@ -15,7 +15,7 @@ spec:
       - gitops-lab
   selector:
     matchLabels:
-      app: minha-aplicacao
+      app: oficina-lanternagem
   podMetricsEndpoints:
     - port: http
       path: /metrics

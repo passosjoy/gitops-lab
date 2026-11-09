@@ -1,17 +1,21 @@
-name: Policy as Code
+name: "01 - Policy Check (Kyverno/OPA)"
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - "gitops-lab-argo-istio/manifests/**"
       - "policy/**"
       - ".github/workflows/policy-check.yaml"
+      - ".github/workflows/ci-cd.yml"
   push:
     branches: [main]
     paths:
       - "gitops-lab-argo-istio/manifests/**"
       - "policy/**"
       - ".github/workflows/policy-check.yaml"
+      - ".github/workflows/ci-cd.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
