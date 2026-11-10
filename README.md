@@ -321,8 +321,9 @@ gitops/
 │       ├── policy-check.yaml          # Kyverno + Conftest no CI
 │       └── retorno.yml                # Callback + DORA lead time
 ├── .opencode/
-│   └── skills/
-│       └── gitops-lab-generator/      # Skill para gerar laboratórios
+│   └── skills/                        # Skill de SRE/DevOps sênior (operação, observabilidade, troubleshooting)        
+│       ├── SKILL.md
+│       └── references/                # Kubernetes, Lambda, observabilidade, infra/GitOps, playbooks
 ├── gitops-lab-argo-istio/
 │   ├── argocd/                        # Argo CD Application (crie/ajuste)
 │   ├── manifests/

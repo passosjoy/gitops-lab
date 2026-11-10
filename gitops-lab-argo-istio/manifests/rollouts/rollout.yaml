@@ -35,8 +35,8 @@ spec:
     spec:
       containers:
         - name: web
-          # Atualizado pelo pipeline .github/workflows/deploy-oci.yml (ou build-and-push + GitOps).
-          image: ghcr.io/SEU-USUARIO/SEU-REPO/app:latest
+          # Substituído pelo pipeline (build-and-push + bump GitOps/deploy). NÃO use :latest (policy-check bloqueia).
+          image: ghcr.io/SEU-USUARIO/SEU-REPO/app:initial
           imagePullPolicy: Always
           ports:
             - name: http
